@@ -1,0 +1,7 @@
+pdf-ex
+pdfs
+*.pdf
+*.txt
+.DS_Store
+*/**/.DS_Store
+!requirements.txt
