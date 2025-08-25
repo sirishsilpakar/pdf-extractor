@@ -1,74 +1,72 @@
-from concurrent.futures import ProcessPoolExecutor, as_completed
+import os
+
+from concurrent.futures import ProcessPoolExecutor, as_completed, TimeoutError
+from functools import partial
+
 from tqdm import tqdm
-import multiprocessing
-import os, time
-import sys
-import pymupdf
 
-# to see error / warnings from pymupdf
-pymupdf.TOOLS.mupdf_display_errors(False) 
+from config import WORKERS, JOB_TIMEOUT_SECONDS
+from worker import process_file
 
-def extract_text(pdf_path):
-    try:
-      start = time.time()
-      pid = os.getpid()
 
-      # preserve folder strucutre
-      rel_path = os.path.relpath(pdf_path, sys.argv[1])
-      rel_no_ext = os.path.splitext(rel_path)[0]  # remove .pdf
-      out_path = os.path.join('output-pdfs', rel_no_ext + ".txt")
-      os.makedirs(os.path.dirname(out_path), exist_ok=True)
+def run_pipeline(input_dir: str):
+    """Runs the entire PDF processing pipeline"""
+    print(f"--------- Starting PDF Extraction Pipeline ---------")
+    print(f"Using {WORKERS} worker processes.")
+    print(f"Job timeout set to {JOB_TIMEOUT_SECONDS} seconds.")
 
-      with pymupdf.open(pdf_path) as doc, open(out_path, "w", encoding="utf-8") as f_out:
-          for page_num, page in enumerate(doc):
-              text = page.get_text()
-              f_out.write(text)
-      elapsed = time.time() - start
-      # How long each worker took to finish
-      # print(f"[Worker {pid}] Processed {os.path.basename(pdf_path)} in {elapsed:.2f}s \n")
-      return os.path.basename(pdf_path), text
-    except Exception as e:
-      print(f"[ERROR] {pdf_path} → {e}")
-        
+    all_files = [
+        os.path.join(r, f)
+        for r, _, fs in os.walk(input_dir)
+        for f in fs
+        if f.lower().endswith(".pdf")
+    ]
+    if not all_files:
+        print(f"No PDF files found in directory : {input_dir}")
+        return
 
-def process_batch(batch):
-    # Process a batch of PDFs
-    return {f: extract_text(f) for f in batch}
+    print(f"Found {len(all_files)} PDF files to process.")
 
-def process_pdfs(pdf_dir, workers=4, batch_size=5):
-    print(f"pdf_dir: {pdf_dir}, workers: {workers}, batch_size: {batch_size} ")
-    # For nested directories PDFs
-    pdf_files = []
-    for root, _, files in os.walk(pdf_dir):
-        for f in files:
-            if f.lower().endswith(".pdf"):
-                pdf_files.append(os.path.join(root, f))
-    results = {}
+    direct_extraction_success, ocr_extraction_success, failures, timeouts = 0, 0, 0, 0
 
-    # Chunk files for efficiency
-    def chunks(lst, n):
-        for i in range(0, len(lst), n):
-            yield lst[i:i+n]
+    # Using partial to pre-fill the input_dir argument for every worker call
+    task_function = partial(process_file, input_dir_root=input_dir)
 
-    with ProcessPoolExecutor(max_workers=workers) as executor:
-        futures = []
-        for batch in chunks(pdf_files, batch_size):
-            futures.append(executor.submit(process_batch, batch))
+    with ProcessPoolExecutor(max_workers=WORKERS) as executor:
+        future_to_file = {executor.submit(task_function, f): f for f in all_files}
 
-        for future in tqdm(as_completed(futures), total=len(futures), desc="Processing PDFs"):
-            results.update(future.result())
+        for future in tqdm(
+            as_completed(future_to_file),
+            total=len(all_files),
+            desc="Processing pdf files",
+        ):
+            file_path = future_to_file[future]
+            try:
+                _, status, message = future.result(timeout=JOB_TIMEOUT_SECONDS)
 
-    return results
+                if status == "SUCCESS_DIRECT":
+                    direct_extraction_success += 1
+                elif status == "SUCCESS_OCR":
+                    ocr_extraction_success += 1
+                else:
+                    failures += 1
+                    print(f"\nERROR: {os.path.basename(file_path)} --> {message}")
 
-if __name__ == "__main__":
-    try:
-        if len(sys.argv) < 2:
-            print("Usage: python script.py <filename>")
-            sys.exit(1)
-        file_dir = sys.argv[1]
-        data = process_pdfs(file_dir, workers=6, batch_size=10)
-        workers = multiprocessing.cpu_count()
-        print(f"Number of Cores available: {workers}")
-        print(f"Processed {len(data)} PDFs")
-    except FileNotFoundError:
-        print("File not found")
+            except TimeoutError:
+                failures += 1
+                timeouts += 1
+                print(
+                    f"\nTIMEOUT ERROR: {os.path.basename(file_path)} took longer than {JOB_TIMEOUT_SECONDS}s and was skipped."
+                )
+            except Exception as e:
+                failures += 1
+                print(
+                    f"\nERROR: An unexpected error occurred for {os.path.basename(file_path)}: {e}"
+                )
+
+    print("\n--------- Pipeline Complete ---------")
+    print(f"Successfully processed (Direct): {direct_extraction_success}")
+    print(f"Successfully processed (OCR): {ocr_extraction_success}")
+    print(f"Failed to process: {failures}")
+    if timeouts > 0:
+        print(f"  ({timeouts} of these failures were due to timeout)")
