@@ -1,6 +1,9 @@
 import os
 
 from concurrent.futures import ProcessPoolExecutor, as_completed, TimeoutError
+import time
+import csv
+import json
 from functools import partial
 
 from tqdm import tqdm
@@ -32,6 +35,8 @@ def run_pipeline(input_dir: str):
     # Using partial to pre-fill the input_dir argument for every worker call
     task_function = partial(process_file, input_dir_root=input_dir)
 
+    per_file_rows = []
+
     with ProcessPoolExecutor(max_workers=WORKERS) as executor:
         future_to_file = {executor.submit(task_function, f): f for f in all_files}
 
@@ -42,15 +47,38 @@ def run_pipeline(input_dir: str):
         ):
             file_path = future_to_file[future]
             try:
-                _, status, message = future.result(timeout=JOB_TIMEOUT_SECONDS)
+                result = future.result(timeout=JOB_TIMEOUT_SECONDS)
+                if isinstance(result, tuple) and len(result) == 5:
+                    _, status, message, elapsed, char_count = result
+                elif isinstance(result, tuple) and len(result) == 4:
+                    _, status, message, elapsed = result
+                    char_count = ""
+                else:
+                    _, status, message = result
+                    elapsed = None
+                    char_count = ""
 
                 if status == "SUCCESS_DIRECT":
                     direct_extraction_success += 1
+                    method = "direct"
                 elif status == "SUCCESS_OCR":
                     ocr_extraction_success += 1
+                    method = "ocr"
                 else:
                     failures += 1
                     print(f"\nERROR: {os.path.basename(file_path)} --> {message}")
+                    method = "error"
+
+                per_file_rows.append(
+                    {
+                        "file": file_path,
+                        "status": status,
+                        "method": method,
+                        "seconds": f"{elapsed:.3f}" if elapsed is not None else "",
+                        "chars": str(char_count) if char_count != "" else "",
+                        "message": message,
+                    }
+                )
 
             except TimeoutError:
                 failures += 1
@@ -70,3 +98,23 @@ def run_pipeline(input_dir: str):
     print(f"Failed to process: {failures}")
     if timeouts > 0:
         print(f"  ({timeouts} of these failures were due to timeout)")
+
+    # Write pipeline summary next to outputs
+    summary_dir = "benchmark_output"
+    os.makedirs(summary_dir, exist_ok=True)
+    csv_path = os.path.join(summary_dir, "pipeline_summary.csv")
+    json_path = os.path.join(summary_dir, "pipeline_summary.json")
+    try:
+        with open(csv_path, "w", newline="", encoding="utf-8") as f:
+            writer = csv.DictWriter(
+                f, fieldnames=["file", "status", "method", "seconds", "chars", "message"]
+            )
+            writer.writeheader()
+            writer.writerows(per_file_rows)
+    except Exception:
+        pass
+    try:
+        with open(json_path, "w", encoding="utf-8") as f:
+            json.dump(per_file_rows, f, ensure_ascii=False, indent=2)
+    except Exception:
+        pass

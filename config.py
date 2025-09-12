@@ -1,4 +1,5 @@
 import multiprocessing
+import os
 
 # Controls the number of parallel processes.
 # A good starting point is half your CPU cores to avoid memory exhaustion,
@@ -16,7 +17,7 @@ JOB_TIMEOUT_SECONDS = 120  # 2 minutes
 TEXT_CHARACTER_THRESHOLD = 50
 
 # To speed up the check, only analyze the first N pages of a document.
-PAGES_TO_CHECK_FOR_OCR = 10
+PAGES_TO_CHECK_FOR_OCR = 3
 
 # The resolution (Dots Per Inch) for rendering PDF pages to images before OCR.
 # Lower DPI is MUCH faster and uses significantly less memory.
@@ -24,3 +25,36 @@ PAGES_TO_CHECK_FOR_OCR = 10
 # - 200: A great balance of speed and quality. (Recommended)
 # - 300: Slower, higher quality. Use for documents with small or unclear text.
 OCR_DPI = 200
+
+# OCR engine configuration
+# Language models to use (e.g., "eng", "deu", or "eng+deu").
+TESSERACT_LANG = "eng"
+
+# OCR Engine Mode (OEM):
+# 0 = Legacy engine only, 1 = Neural nets LSTM only, 2 = Legacy + LSTM, 3 = Default based on what is available
+TESSERACT_OEM = 1
+
+# Page Segmentation Mode (PSM): common fast choice is 6 (Assume a single uniform block of text)
+# See `tesseract --help-psm` for options.
+TESSERACT_PSM = 6
+
+# Per-page OCR timeout (in seconds). Slow or problematic pages will be skipped after this time.
+TESSERACT_PAGE_TIMEOUT_SECONDS = 30
+
+# Limit OpenMP thread usage inside libraries (e.g., Leptonica/BLAS) used by Tesseract
+# Helps prevent oversubscription when running multiple processes
+OMP_THREAD_LIMIT = 1
+
+# Optional page-level OCR threading within a single PDF. This trades memory for speed.
+# If enabled, each worker will use a small thread pool to OCR multiple pages concurrently.
+# Keep this low (e.g., 2-4) to avoid high RAM usage.
+# Allow environment variable overrides so CLI can control behavior before workers spawn.
+ENABLE_PAGE_LEVEL_OCR_THREADS = os.getenv("ENABLE_PAGE_LEVEL_OCR_THREADS", "false").lower() in (
+    "1",
+    "true",
+    "yes",
+    "on",
+)
+PAGE_LEVEL_OCR_MAX_WORKERS = int(
+    os.getenv("PAGE_LEVEL_OCR_MAX_WORKERS", str(max(1, multiprocessing.cpu_count() // 4)))
+)
