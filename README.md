@@ -69,6 +69,86 @@ python main.py /path/to/your/input_pdfs
 
 The script will start, display the configured number of workers, and show a series of real-time progress bars for the Triage, Direct Extraction, and OCR Extraction phases.
 
+### Benchmarking multiple OCR/Extractors
+
+This repo also includes a lightweight benchmarking utility to compare text quality and speed across several extractors:
+
+- PyMuPDF (direct text)
+- Tesseract OCR (via page render)
+- PDFMiner, PDFPlumber, PyPDF2 (if installed)
+- EasyOCR (optional; if installed)
+
+List available extractors:
+
+```bash
+python benchmark.py --list .
+```
+
+Run the benchmark on a folder of PDFs and write outputs per extractor plus a summary CSV/JSON:
+
+```bash
+python benchmark.py /path/to/your/input_pdfs benchmark_output
+```
+
+Run only specific extractors (comma-separated):
+
+```bash
+python benchmark.py /path/to/your/input_pdfs benchmark_output --extractors pymupdf,tesseract,pdfminer
+```
+
+Compare outputs and generate similarity metrics
+
+Timing is captured in `summary.csv`/`summary.json` (seconds and chars). To compute pairwise similarity across extractors and optional HTML side-by-side diffs:
+
+```bash
+# Compare all pairs and write comparisons.csv/json
+python benchmark.py /path/to/pdfs benchmark_output
+
+# Choose a baseline (e.g., pymupdf) and compare others to it (+ save HTML diffs)
+python benchmark.py /path/to/pdfs benchmark_output --baseline pymupdf --diffs
+
+# Skip comparisons if you only want timing
+python benchmark.py /path/to/pdfs benchmark_output --no-compare
+```
+
+Similarity metrics included:
+
+- jaccard: token-set overlap
+- fuzzy_ratio: difflib/rapidfuzz similarity
+- tfidf_cosine: cosine similarity (if scikit-learn is installed)
+
+Artifacts:
+
+- `benchmark_output/<extractor>/.../*.txt` — extracted text per extractor
+- `benchmark_output/summary.csv` — rows: file, extractor, status, seconds, chars, error
+- `benchmark_output/summary.json` — same as CSV in JSON
+
+To include optional extractors, install extra packages:
+
+```bash
+pip install pdfminer.six pdfplumber PyPDF2 easyocr
+```
+
+Add your own extractor
+
+You can register a new extractor with a simple function and decorator in `benchmark.py`:
+
+```python
+from benchmark import register_extractor
+
+@register_extractor(
+    "marker",
+    available=lambda: True,  # add a module check if needed
+    description="High-fidelity OCR to Markdown via Marker",
+)
+def extract_marker_text(pdf_path: str) -> str:
+    # call into your library here and return a string
+    return "..."
+```
+
+This registry approach makes it easy to plug in engines like Marker, Tika, or Unstructured and compare them uniformly.
+
+
 ## Understanding the Output
 
 The pipeline creates two top-level directories for the extracted text. Within each, the original folder structure from your input directory is preserved.
