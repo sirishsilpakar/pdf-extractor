@@ -12,10 +12,10 @@ from config import WORKERS, JOB_TIMEOUT_SECONDS
 from worker import process_file
 
 
-def run_pipeline(input_dir: str):
+def run_pipeline(input_dir: str, batch_size: int = 10):
     """Runs the entire PDF processing pipeline"""
     print(f"--------- Starting PDF Extraction Pipeline ---------")
-    print(f"Using {WORKERS} worker processes.")
+    print(f"Using {WORKERS} worker processes, batch_size: {batch_size}")
     print(f"Job timeout set to {JOB_TIMEOUT_SECONDS} seconds.")
 
     all_files = [
@@ -37,8 +37,12 @@ def run_pipeline(input_dir: str):
 
     per_file_rows = []
 
+    def chunks(lst, n):
+        for i in range(0, len(lst), n):
+            yield lst[i:i+n]
+
     with ProcessPoolExecutor(max_workers=WORKERS) as executor:
-        future_to_file = {executor.submit(task_function, f): f for f in all_files}
+        future_to_file = {executor.submit(task_function, f): f for f in chunks(all_files, batch_size)}
 
         for future in tqdm(
             as_completed(future_to_file),

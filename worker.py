@@ -56,7 +56,7 @@ def process_file(file_path, input_dir_root):
 
 
 def extract_text_direct(file_path, input_dir_root):
-    output_dir = "output_direct_extract"
+    output_dir = "extracted_files"
     try:
         rel_path = os.path.relpath(file_path, input_dir_root)
         out_path = os.path.join(output_dir, os.path.splitext(rel_path)[0] + ".txt")

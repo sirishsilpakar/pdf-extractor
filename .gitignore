@@ -209,3 +209,4 @@ pdfs
 .DS_Store
 */**/.DS_Store
 !requirements.txt
+script.sh
