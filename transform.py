@@ -1,4 +1,4 @@
-import os
+import os, sys
 import time
 import re
 import pymupdf
@@ -105,14 +105,21 @@ class TextFileHandler(FileSystemEventHandler):
         try:
           # Adding delay so that the extraction processing is completed
           time.sleep(3)
-          output_file = self.output_dir / file_path.name  
+          print("Start processing files...")
+          # preserve folder strucutre
+          rel_path = os.path.relpath(file_path, "extracted_files")
+          rel_no_ext = os.path.splitext(rel_path)[0]  # remove .pdf
+          out_path = os.path.join('processed_files', rel_no_ext + ".txt")
+          os.makedirs(os.path.dirname(out_path), exist_ok=True)
+          
           # Read the input file
-          with pymupdf.open(file_path) as doc, open(output_file, "w", encoding="utf-8") as f_out:
+          with pymupdf.open(file_path) as doc, open(out_path, "w", encoding="utf-8") as f_out:
             for page_num, page in enumerate(doc):
               text = page.get_text()
               processed_content = preprocess_text(text)
               f_out.write(processed_content)
-            print(f"Processed file saved: {output_file}")
+            print(f"Processed file saved: {out_path}")
+          return os.path.basename(file_path), text
             
         except Exception as e:
             print(f"Error processing {file_path}: {e}")
@@ -128,7 +135,7 @@ def main():
     # Set up file system watcher
     event_handler = TextFileHandler(INPUT_DIR, OUTPUT_DIR)
     observer = Observer()
-    observer.schedule(event_handler, INPUT_DIR, recursive=False)
+    observer.schedule(event_handler, INPUT_DIR, recursive=True)
     
     # Start monitoring
     observer.start()
