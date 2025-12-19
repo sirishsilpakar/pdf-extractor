@@ -89,7 +89,7 @@ Total input PDFs: 16994
 Total output TXT files: 16988
 Missing TXT files: 6
 Empty TXT files (<50 bytes): 540
-Encoding issues: 825
+Encoding issues: 286
 
 Reports saved to:
 - qa_reports/missing_txt_files.csv
