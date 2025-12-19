@@ -37,19 +37,22 @@ It ensures that every PDF file in a given input directory has a corresponding ex
 ## Installation
 
 1. Clone this repository:
+create a folder
+type cmd in address bar
 
 ```bash
-git clone https://github.com/yourusername/pdf-extraction-qa.git
-cd pdf-extraction-qa
+git clone https://gitlab.uni-marburg.de/gurung/pdf-extractor.git
+
 ```
 
 2. Install required dependencies:
 
 ```bash
-pip install tqdm chardet
+pip install tqdm 
+pip install chardet
 ```
 
-(Use a virtual environment like `venv` or `conda` if preferred.)
+
 
 ---
 
