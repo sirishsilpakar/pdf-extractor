@@ -24,22 +24,22 @@ PAGES_TO_CHECK_FOR_OCR = 3
 # - 150: Fastest, lowest quality. Good for clean documents.
 # - 200: A great balance of speed and quality. (Recommended)
 # - 300: Slower, higher quality. Use for documents with small or unclear text.
-OCR_DPI = 200
+OCR_DPI = int(os.getenv("OCR_DPI", "200"))
 
 # OCR engine configuration
 # Language models to use (e.g., "eng", "deu", or "eng+deu").
-TESSERACT_LANG = "eng"
+TESSERACT_LANG = os.getenv("TESSERACT_LANG", "eng+deu")
 
 # OCR Engine Mode (OEM):
 # 0 = Legacy engine only, 1 = Neural nets LSTM only, 2 = Legacy + LSTM, 3 = Default based on what is available
-TESSERACT_OEM = 1
+TESSERACT_OEM = int(os.getenv("TESSERACT_OEM", "1"))
 
 # Page Segmentation Mode (PSM): common fast choice is 6 (Assume a single uniform block of text)
 # See `tesseract --help-psm` for options.
-TESSERACT_PSM = 6
+TESSERACT_PSM = int(os.getenv("TESSERACT_PSM", "6"))
 
 # Per-page OCR timeout (in seconds). Slow or problematic pages will be skipped after this time.
-TESSERACT_PAGE_TIMEOUT_SECONDS = 30
+TESSERACT_PAGE_TIMEOUT_SECONDS = int(os.getenv("TESSERACT_PAGE_TIMEOUT_SECONDS", "30"))
 
 # Limit OpenMP thread usage inside libraries (e.g., Leptonica/BLAS) used by Tesseract
 # Helps prevent oversubscription when running multiple processes
