@@ -187,11 +187,17 @@ def process_file(file_path, input_dir_root, output_dir_root="extracted_files"):
         # Write outputs to specific subfolder
         output_dir = os.path.join(output_dir_root, subfolder)
         out_txt_path = os.path.join(output_dir, base_name + ".txt")
+        out_meta_path = os.path.join(output_dir, base_name + ".meta.json")
+
         os.makedirs(os.path.dirname(out_txt_path), exist_ok=True)
 
         final_text = "".join(full_text)
         with open(out_txt_path, "w", encoding="utf-8") as f:
             f.write(final_text)
+
+        with open(out_meta_path, "w", encoding="utf-8") as f:
+            json.dump(metadata_report, f, indent=2)
+
         elapsed = time.time() - start_time
         char_count = len(final_text)
 
