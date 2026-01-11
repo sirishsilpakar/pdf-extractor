@@ -58,3 +58,9 @@ ENABLE_PAGE_LEVEL_OCR_THREADS = os.getenv("ENABLE_PAGE_LEVEL_OCR_THREADS", "fals
 PAGE_LEVEL_OCR_MAX_WORKERS = int(
     os.getenv("PAGE_LEVEL_OCR_MAX_WORKERS", str(max(1, multiprocessing.cpu_count() // 4)))
 )
+
+# Threshold of (Image Area / Page Area) to trigger OCR for a page.
+OCR_ON_IMAGE_AREA_THRESHOLD = float(os.getenv("OCR_ON_IMAGE_AREA_THRESHOLD", "0.20"))
+
+# If direct extraction returns fewer characters than this, fallback to OCR for that page.
+OCR_LOW_TEXT_LENGTH_THRESHOLD = 10

@@ -59,6 +59,9 @@ def main():
             os.environ["WORKERS_OVERRIDE"] = str(args.workers)
         run_pipeline(input_dir=input_directory, output_dir=args.output_dir, force=args.force)
     except Exception as e:
+        import logging
+
+        logging.exception(e)
         print(f"A critical error occurred in the main process: {e}")
 
 if __name__ == "__main__":
