@@ -64,5 +64,6 @@ def main():
         logging.exception(e)
         print(f"A critical error occurred in the main process: {e}")
 
+
 if __name__ == "__main__":
     main()

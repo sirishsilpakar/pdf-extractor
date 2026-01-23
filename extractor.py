@@ -10,20 +10,38 @@ from tqdm import tqdm
 
 from config import WORKERS, JOB_TIMEOUT_SECONDS
 from worker import process_file
+import database
+
 # Configure logging
 logging.basicConfig(
-    filename='pipeline.log',
+    filename="pipeline.log",
     level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s'
+    format="%(asctime)s - %(levelname)s - %(message)s",
 )
 
-def run_pipeline(input_dir: str, output_dir: str = "extracted_files", batch_size: int = 10, force: bool = False):
+
+def run_pipeline(
+    input_dir: str,
+    output_dir: str = "extracted_files",
+    batch_size: int = 10,
+    force: bool = False,
+):
     """Runs the entire PDF processing pipeline"""
     print(f"--------- Starting PDF Extraction Pipeline ---------")
     print(f"Using {WORKERS} worker processes")
     print(f"Job timeout set to {JOB_TIMEOUT_SECONDS} seconds.")
     print(f"Output Directory: {output_dir}")
+
+    # Initialize Database
+    database.init_db()
+
+    # Get list of already completed files
+    if not force:
+        completed_files = database.get_processed_files()
+        print(f"Found {len(completed_files)} already processed files in DB.")
+    else:
         completed_files = set()
+        print("Force mode enabled: Reprocessing all files.")
 
     all_files = [
         os.path.abspath(os.path.join(r, f))
@@ -31,10 +49,12 @@ def run_pipeline(input_dir: str, output_dir: str = "extracted_files", batch_size
         for f in fs
         if f.lower().endswith(".pdf")
     ]
-    
+
     if not all_files:
         print(f"No PDF files found in directory : {input_dir}")
         return
+
+    # Filter files
     files_to_process = []
     skipped_count = 0
     for f in all_files:
@@ -42,17 +62,25 @@ def run_pipeline(input_dir: str, output_dir: str = "extracted_files", batch_size
             skipped_count += 1
         else:
             files_to_process.append(f)
-            
-    print(f"Total PDFs found: {len(all_files)}")
-    print(f"To Process: {len(files_to_process)}")
-    
-    logging.info(f"Pipeline started. Found {len(all_files)} files. Processing {len(files_to_process)}. Skipped {skipped_count}.")
 
+    print(f"Total PDFs found: {len(all_files)}")
+    print(f"Skipping: {skipped_count}")
+    print(f"To Process: {len(files_to_process)}")
+
+    logging.info(
+        f"Pipeline started. Found {len(all_files)} files. Processing {len(files_to_process)}. Skipped {skipped_count}."
+    )
+
+    if not files_to_process:
+        print("No new files to process.")
+        return
 
     direct_extraction_success, ocr_extraction_success, failures, timeouts = 0, 0, 0, 0
 
     # Using partial to pre-fill the input_dir argument for every worker call
-    task_function = partial(process_file, input_dir_root=input_dir, output_dir_root=output_dir)
+    task_function = partial(
+        process_file, input_dir_root=input_dir, output_dir_root=output_dir
+    )
 
     per_file_rows = []
 
@@ -60,6 +88,7 @@ def run_pipeline(input_dir: str, output_dir: str = "extracted_files", batch_size
         # Mark files as STARTED and submit
         future_to_file = {}
         for f in files_to_process:
+            database.mark_started(f)  # Start tracking
             future = executor.submit(task_function, f)
             future_to_file[future] = f
 
@@ -82,6 +111,7 @@ def run_pipeline(input_dir: str, output_dir: str = "extracted_files", batch_size
                     char_count = ""
 
                 if "SUCCESS" in status:
+                    database.mark_completed(file_path)
                     if status == "SUCCESS_DIRECT":
                         direct_extraction_success += 1
                         method = "direct"
@@ -90,15 +120,18 @@ def run_pipeline(input_dir: str, output_dir: str = "extracted_files", batch_size
                         method = "ocr"
                     else:
                         method = "unknown"
-                    
+
                     log_msg = f"PROCESSED: {file_path} | Method: {method} | Time: {elapsed:.3f}s | Chars: {char_count}"
                     logging.info(log_msg)
 
                     if char_count == 0:
-                        logging.warning(f"EMPTY_OUTPUT: {file_path} extraction yielded 0 characters.")
+                        logging.warning(
+                            f"EMPTY_OUTPUT: {file_path} extraction yielded 0 characters."
+                        )
 
                 else:
                     failures += 1
+                    database.mark_failed(file_path, message)
                     print(f"\nERROR: {os.path.basename(file_path)} --> {message}")
                     logging.error(f"FAILURE: {file_path} - {message}")
                     method = "error"
@@ -118,14 +151,16 @@ def run_pipeline(input_dir: str, output_dir: str = "extracted_files", batch_size
                 failures += 1
                 timeouts += 1
                 msg = f"TIMEOUT ({JOB_TIMEOUT_SECONDS}s)"
+                database.mark_failed(file_path, msg)
                 print(
                     f"\nTIMEOUT ERROR: {os.path.basename(file_path)} took longer than {JOB_TIMEOUT_SECONDS}s and was skipped."
                 )
                 logging.error(f"TIMEOUT: {file_path}")
-                
+
             except Exception as e:
                 failures += 1
                 msg = str(e)
+                database.mark_failed(file_path, msg)
                 print(
                     f"\nERROR: An unexpected error occurred for {os.path.basename(file_path)}: {e}"
                 )
@@ -137,8 +172,10 @@ def run_pipeline(input_dir: str, output_dir: str = "extracted_files", batch_size
     print(f"Failed to process: {failures}")
     if timeouts > 0:
         print(f"  ({timeouts} of these failures were due to timeout)")
-        
-    logging.info(f"Pipeline finished. Direct: {direct_extraction_success}, OCR: {ocr_extraction_success}, Failed: {failures}, Timeouts: {timeouts}")
+
+    logging.info(
+        f"Pipeline finished. Direct: {direct_extraction_success}, OCR: {ocr_extraction_success}, Failed: {failures}, Timeouts: {timeouts}"
+    )
 
     # Save the pipeline summary
     summary_dir = "benchmark_output"
@@ -148,7 +185,8 @@ def run_pipeline(input_dir: str, output_dir: str = "extracted_files", batch_size
     try:
         with open(csv_path, "w", newline="", encoding="utf-8") as f:
             writer = csv.DictWriter(
-                f, fieldnames=["file", "status", "method", "seconds", "chars", "message"]
+                f,
+                fieldnames=["file", "status", "method", "seconds", "chars", "message"],
             )
             writer.writeheader()
             writer.writerows(per_file_rows)

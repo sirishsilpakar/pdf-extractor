@@ -210,3 +210,7 @@ pdfs
 */**/.DS_Store
 !requirements.txt
 script.sh
+.venv*
+/extracted_files/*
+/benchmark_output/*
+state.db
