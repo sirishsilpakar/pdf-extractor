@@ -6,24 +6,41 @@ import pymupdf
 from extractor import run_pipeline
 from config import OMP_THREAD_LIMIT
 
+
 def main():
     parser = argparse.ArgumentParser(description="PDF extraction pipeline")
     parser.add_argument("input_directory", help="Directory containing PDFs")
-    parser.add_argument("--workers", type=int, default=None, help="Override number of worker processes")
     parser.add_argument(
-        "--enable-page-ocr", action="store_true", help="Enable page-level OCR threading inside each worker"
+        "--workers", type=int, default=None, help="Override number of worker processes"
     )
     parser.add_argument(
-        "--page-ocr-workers", type=int, default=None, help="Threads per worker for page-level OCR (2-4 recommended)"
+        "--enable-page-ocr",
+        action="store_true",
+        help="Enable page-level OCR threading inside each worker",
     )
     parser.add_argument(
-        "--no-ocr", action="store_true", help="Disable OCR completely (force direct extraction)"
+        "--page-ocr-workers",
+        type=int,
+        default=None,
+        help="Threads per worker for page-level OCR (2-4 recommended)",
     )
     parser.add_argument(
-        "--output-dir", default="extracted_files", help="Directory to save extracted files (default: extracted_files)"
+        "--force", action="store_true", help="Force reprocessing of all files"
     )
     parser.add_argument(
-        "--fast", action="store_true", help="Enable fast mode (lower DPI, conservative OCR, shorter timeouts)"
+        "--no-ocr",
+        action="store_true",
+        help="Disable OCR completely (force direct extraction)",
+    )
+    parser.add_argument(
+        "--output-dir",
+        default="extracted_files",
+        help="Directory to save extracted files (default: extracted_files)",
+    )
+    parser.add_argument(
+        "--fast",
+        action="store_true",
+        help="Enable fast mode (lower DPI, conservative OCR, shorter timeouts)",
     )
     args = parser.parse_args()
 
@@ -57,7 +74,9 @@ def main():
         # Optionally override worker count through environment to keep config centralized
         if args.workers is not None and args.workers > 0:
             os.environ["WORKERS_OVERRIDE"] = str(args.workers)
-        run_pipeline(input_dir=input_directory, output_dir=args.output_dir, force=args.force)
+        run_pipeline(
+            input_dir=input_directory, output_dir=args.output_dir, force=args.force
+        )
     except Exception as e:
         import logging
 

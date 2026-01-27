@@ -49,14 +49,18 @@ OMP_THREAD_LIMIT = 1
 # If enabled, each worker will use a small thread pool to OCR multiple pages concurrently.
 # Keep this low (e.g., 2-4) to avoid high RAM usage.
 # Allow environment variable overrides so CLI can control behavior before workers spawn.
-ENABLE_PAGE_LEVEL_OCR_THREADS = os.getenv("ENABLE_PAGE_LEVEL_OCR_THREADS", "false").lower() in (
+ENABLE_PAGE_LEVEL_OCR_THREADS = os.getenv(
+    "ENABLE_PAGE_LEVEL_OCR_THREADS", "false"
+).lower() in (
     "1",
     "true",
     "yes",
     "on",
 )
 PAGE_LEVEL_OCR_MAX_WORKERS = int(
-    os.getenv("PAGE_LEVEL_OCR_MAX_WORKERS", str(max(1, multiprocessing.cpu_count() // 4)))
+    os.getenv(
+        "PAGE_LEVEL_OCR_MAX_WORKERS", str(max(1, multiprocessing.cpu_count() // 4))
+    )
 )
 
 # Threshold of (Image Area / Page Area) to trigger OCR for a page.

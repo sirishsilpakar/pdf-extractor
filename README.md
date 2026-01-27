@@ -17,11 +17,13 @@ A robust PDF extraction tool that automatically switches between direct text ext
 - Tesseract OCR (`brew install tesseract` or `sudo apt-get install tesseract-ocr`)
 
 ### Setup
-1.  **Clone & Venv**:
+1.  **Install Dependencies & Pre-commit Hooks**:
     ```bash
     python3 -m venv venv
     source venv/bin/activate
     pip install -r requirements.txt
+    pip install -e .[dev]
+    pre-commit install
     ```
 
 2.  **Build** (Optional, to create a wheel):

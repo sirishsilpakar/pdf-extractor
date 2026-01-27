@@ -30,6 +30,7 @@ def iter_pdf_files(root: str) -> List[str]:
 
 ExtractorFn = Callable[[str], str]
 
+
 @dataclass
 class Extractor:
     name: str
@@ -55,8 +56,11 @@ def register_extractor(
     description: str = "",
 ):
     def decorator(fn: ExtractorFn) -> ExtractorFn:
-        _REGISTRY[name] = Extractor(name=name, func=fn, available=available, description=description)
+        _REGISTRY[name] = Extractor(
+            name=name, func=fn, available=available, description=description
+        )
         return fn
+
     return decorator
 
 
@@ -87,7 +91,9 @@ def extract_tesseract_text(pdf_path: str) -> str:
             for page in doc:
                 pix = page.get_pixmap(dpi=200)
                 gray_pix = pymupdf.Pixmap(pymupdf.csGRAY, pix)
-                img = Image.frombytes("L", [gray_pix.width, gray_pix.height], gray_pix.samples)
+                img = Image.frombytes(
+                    "L", [gray_pix.width, gray_pix.height], gray_pix.samples
+                )
                 try:
                     text = pytesseract.image_to_string(img)
                 finally:
@@ -96,19 +102,24 @@ def extract_tesseract_text(pdf_path: str) -> str:
         return "".join(texts)
     # Threaded per-page OCR
     from concurrent.futures import ThreadPoolExecutor, as_completed
+
     with pymupdf.open(pdf_path) as doc_info:
         num_pages = doc_info.page_count
+
     def ocr_page(idx: int) -> Tuple[int, str]:
         with pymupdf.open(pdf_path) as doc_local:
             page = doc_local.load_page(idx)
             pix = page.get_pixmap(dpi=200)
             gray_pix = pymupdf.Pixmap(pymupdf.csGRAY, pix)
-            img = Image.frombytes("L", [gray_pix.width, gray_pix.height], gray_pix.samples)
+            img = Image.frombytes(
+                "L", [gray_pix.width, gray_pix.height], gray_pix.samples
+            )
         try:
             text = pytesseract.image_to_string(img)
         finally:
             pix = gray_pix = img = None
         return idx, text
+
     results_buf: List[str] = [""] * num_pages
     with ThreadPoolExecutor(max_workers=page_workers) as pool:
         futures = [pool.submit(ocr_page, i) for i in range(num_pages)]
@@ -125,7 +136,7 @@ def extract_tesseract_text(pdf_path: str) -> str:
 )
 def extract_pdfminer_text(pdf_path: str) -> str:
     try:
-        from pdfminer.high_level import extract_text as pdfminer_extract_text 
+        from pdfminer.high_level import extract_text as pdfminer_extract_text
     except Exception:
         raise RuntimeError("pdfminer.six not installed")
     return pdfminer_extract_text(pdf_path) or ""
@@ -138,7 +149,7 @@ def extract_pdfminer_text(pdf_path: str) -> str:
 )
 def extract_pdfplumber_text(pdf_path: str) -> str:
     try:
-        import pdfplumber 
+        import pdfplumber
     except Exception:
         raise RuntimeError("pdfplumber not installed")
     texts: List[str] = []
@@ -155,7 +166,7 @@ def extract_pdfplumber_text(pdf_path: str) -> str:
 )
 def extract_pypdf2_text(pdf_path: str) -> str:
     try:
-        from PyPDF2 import PdfReader 
+        from PyPDF2 import PdfReader
     except Exception:
         raise RuntimeError("PyPDF2 not installed")
     reader = PdfReader(pdf_path)
@@ -165,10 +176,10 @@ def extract_pypdf2_text(pdf_path: str) -> str:
     return "".join(texts)
 
 
-
 def try_import_easyocr():
     try:
         import easyocr
+
         return easyocr
     except Exception:
         return None
@@ -209,7 +220,8 @@ def extract_marker_text(pdf_path: str) -> str:
     def _marker_text_from_rendered(rendered) -> str:
         print(rendered)
         try:
-            from marker.output import text_from_rendered as tfr 
+            from marker.output import text_from_rendered as tfr
+
             txt, _, _ = tfr(rendered)
             print(rendered)
             print(txt)
@@ -228,7 +240,9 @@ def extract_marker_text(pdf_path: str) -> str:
             if isinstance(obj, dict):
                 for k, v in obj.items():
                     if isinstance(k, str) and "table" in k.lower():
-                        if (isinstance(v, (list, dict)) and len(v) != 0) or (isinstance(v, str) and v.strip()):
+                        if (isinstance(v, (list, dict)) and len(v) != 0) or (
+                            isinstance(v, str) and v.strip()
+                        ):
                             return True
                     if _rendered_has_tables(v):
                         return True
@@ -240,14 +254,13 @@ def extract_marker_text(pdf_path: str) -> str:
             return False
         return False
 
-
     def _run_marker_ocr(p: str) -> str:
-        from marker.converters.ocr import OCRConverter 
-        from marker.models import create_model_dict as create_fn 
-        
+        from marker.converters.ocr import OCRConverter
+        from marker.models import create_model_dict as create_fn
+
         ocr_converter = OCRConverter(artifact_dict=create_fn())
         rendered_ocr = ocr_converter(p)
-        print('rendered_ocr', rendered_ocr)
+        print("rendered_ocr", rendered_ocr)
         text_ocr = _marker_text_from_rendered(rendered_ocr)
         if not text_ocr.strip():
             raise RuntimeError("marker OCR returned empty text")
@@ -255,7 +268,8 @@ def extract_marker_text(pdf_path: str) -> str:
 
     # Try standard path first to detect tables quickly
     try:
-        from marker.convert import TableConverter, PdfConverter, create_model_dict 
+        from marker.convert import TableConverter, PdfConverter, create_model_dict
+
         converter = TableConverter(artifact_dict=create_model_dict())
         rendered = converter(pdf_path)
         # if _rendered_has_tables(rendered):
@@ -322,11 +336,16 @@ def benchmark_extractors(
         with mp.get_context("spawn").Pool(processes=parallel_workers) as pool:
             for res in pool.imap_unordered(lambda t: _exec_task(*t), tasks):
                 results.append(res)
-                pbar.set_postfix_str(f"{res['extractor']} → {os.path.basename(res['file'])}", refresh=False)
+                pbar.set_postfix_str(
+                    f"{res['extractor']} → {os.path.basename(res['file'])}",
+                    refresh=False,
+                )
                 pbar.update(1)
     else:
         for pdf_path, name in tasks:
-            pbar.set_postfix_str(f"{name} → {os.path.basename(pdf_path)}", refresh=False)
+            pbar.set_postfix_str(
+                f"{name} → {os.path.basename(pdf_path)}", refresh=False
+            )
             res = _exec_task(pdf_path, name)
             results.append(res)
             pbar.update(1)
@@ -388,17 +407,19 @@ def _jaccard(a: str, b: str) -> float:
 
 def _fuzzy_ratio(a: str, b: str) -> float:
     try:
-        from rapidfuzz import fuzz 
+        from rapidfuzz import fuzz
+
         return float(fuzz.ratio(a, b)) / 100.0
     except Exception:
         from difflib import SequenceMatcher
+
         return SequenceMatcher(None, a, b).ratio()
 
 
 def _tfidf_cosine(a: str, b: str) -> str:
     try:
-        from sklearn.feature_extraction.text import TfidfVectorizer 
-        from sklearn.metrics.pairwise import cosine_similarity 
+        from sklearn.feature_extraction.text import TfidfVectorizer
+        from sklearn.metrics.pairwise import cosine_similarity
     except Exception:
         return ""
     vec = TfidfVectorizer(min_df=1)
@@ -466,6 +487,7 @@ def write_comparisons(
             if write_diffs:
                 try:
                     from difflib import HtmlDiff
+
                     html = HtmlDiff().make_file(
                         ta.splitlines(),
                         tb.splitlines(),
@@ -485,7 +507,17 @@ def write_comparisons(
     csv_path = os.path.join(out_root, "comparisons.csv")
     with open(csv_path, "w", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(
-            f, fieldnames=["file", "a", "b", "a_chars", "b_chars", "jaccard", "fuzzy_ratio", "tfidf_cosine"]
+            f,
+            fieldnames=[
+                "file",
+                "a",
+                "b",
+                "a_chars",
+                "b_chars",
+                "jaccard",
+                "fuzzy_ratio",
+                "tfidf_cosine",
+            ],
         )
         writer.writeheader()
         writer.writerows(rows)
@@ -497,28 +529,64 @@ def write_comparisons(
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Benchmark multiple PDF extractors/OCR engines")
+    parser = argparse.ArgumentParser(
+        description="Benchmark multiple PDF extractors/OCR engines"
+    )
     parser.add_argument("pdf_root", help="Directory tree with PDFs")
-    parser.add_argument("out_dir", nargs="?", default="benchmark_output", help="Output directory (default: benchmark_output)")
+    parser.add_argument(
+        "out_dir",
+        nargs="?",
+        default="benchmark_output",
+        help="Output directory (default: benchmark_output)",
+    )
     parser.add_argument(
         "--extractors",
         help="Comma-separated list of extractor names to run (use --list to see options)",
         default=None,
     )
-    parser.add_argument("--list", action="store_true", help="List available/registered extractors and exit")
-    parser.add_argument("--baseline", help="Baseline extractor name for comparisons", default=None)
-    parser.add_argument("--no-compare", action="store_true", help="Skip pairwise text comparisons")
-    parser.add_argument("--diffs", action="store_true", help="Also write HTML side-by-side diffs (baseline vs others if baseline provided, else all pairs)")
-    parser.add_argument("--timeout", type=float, default=None, help="Per (file, extractor) timeout in seconds for the benchmark run (unused in parallel mode)")
-    parser.add_argument("--parallel", type=int, default=1, help="Process-level parallelism for benchmark jobs (file, extractor)")
-    parser.add_argument("--tesseract-page-workers", type=int, default=1, help="Enable page-level threading inside the Tesseract extractor (per PDF)")
+    parser.add_argument(
+        "--list",
+        action="store_true",
+        help="List available/registered extractors and exit",
+    )
+    parser.add_argument(
+        "--baseline", help="Baseline extractor name for comparisons", default=None
+    )
+    parser.add_argument(
+        "--no-compare", action="store_true", help="Skip pairwise text comparisons"
+    )
+    parser.add_argument(
+        "--diffs",
+        action="store_true",
+        help="Also write HTML side-by-side diffs (baseline vs others if baseline provided, else all pairs)",
+    )
+    parser.add_argument(
+        "--timeout",
+        type=float,
+        default=None,
+        help="Per (file, extractor) timeout in seconds for the benchmark run (unused in parallel mode)",
+    )
+    parser.add_argument(
+        "--parallel",
+        type=int,
+        default=1,
+        help="Process-level parallelism for benchmark jobs (file, extractor)",
+    )
+    parser.add_argument(
+        "--tesseract-page-workers",
+        type=int,
+        default=1,
+        help="Enable page-level threading inside the Tesseract extractor (per PDF)",
+    )
     args = parser.parse_args()
 
     if args.list:
         rows = list_extractors()
         print("Registered extractors:")
         for row in rows:
-            print(f"- {row['name']}: available={row['available']} — {row['description']}")
+            print(
+                f"- {row['name']}: available={row['available']} — {row['description']}"
+            )
         sys.exit(0)
 
     in_root = args.pdf_root
@@ -541,7 +609,9 @@ if __name__ == "__main__":
         run_map = all_extractors
 
     # Threading control for Tesseract
-    os.environ["BENCH_TESS_PAGE_WORKERS"] = str(max(1, int(args.tesseract_page_workers)))
+    os.environ["BENCH_TESS_PAGE_WORKERS"] = str(
+        max(1, int(args.tesseract_page_workers))
+    )
 
     print(f"Running {len(run_map)} extractors: {', '.join(run_map.keys())}")
     results = benchmark_extractors(
@@ -563,4 +633,6 @@ if __name__ == "__main__":
             baseline=args.baseline,
             write_diffs=args.diffs,
         )
-        print(f"Wrote pairwise comparisons to {out_root}/comparisons.csv and comparisons.json")
+        print(
+            f"Wrote pairwise comparisons to {out_root}/comparisons.csv and comparisons.json"
+        )

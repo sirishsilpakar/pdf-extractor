@@ -25,3 +25,9 @@ pdf-extractor-full = "main:main"
 
 [tool.setuptools]
 py-modules = ["main", "extractor", "worker", "config", "database"]
+
+[project.optional-dependencies]
+dev = [
+    "pre-commit>=3.0.0",
+    "black>=24.0.0",
+]
