@@ -213,4 +213,6 @@ script.sh
 .venv*
 /extracted_files/*
 /benchmark_output/*
-state.db
+*.meta.json*
+*.db
+*.db-*

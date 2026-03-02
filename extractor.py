@@ -4,29 +4,41 @@ from concurrent.futures import ProcessPoolExecutor, as_completed, TimeoutError
 import time
 import csv
 import json
+from datetime import datetime
 from functools import partial
+from pathlib import Path
+from typing import Optional
 
-from tqdm import tqdm
-
-from config import WORKERS, JOB_TIMEOUT_SECONDS
+from config import WORKERS, JOB_TIMEOUT_SECONDS, LOG_DIR
 from worker import process_file
 import database
 
-# Configure logging
-logging.basicConfig(
-    filename="pipeline.log",
-    level=logging.INFO,
-    format="%(asctime)s - %(levelname)s - %(message)s",
-)
+logger = logging.getLogger(__name__)
 
+def _configure_logging(log_dir: str) -> str:
+    """Create a timestamped log file. Returns its path."""
+    os.makedirs(log_dir, exist_ok=True)
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    log_path = os.path.join(log_dir, f"pipeline_{ts}.log")
+    logging.basicConfig(
+        filename=log_path,
+        level=logging.INFO,
+        format="%(asctime)s - %(levelname)s - %(message)s",
+        force=True,
+    )
 
 def run_pipeline(
     input_dir: str,
     output_dir: str = "extracted_files",
     batch_size: int = 10,
     force: bool = False,
+    log_dir: str = None,
 ):
-    """Runs the entire PDF processing pipeline"""
+    log_dir = log_dir or LOG_DIR
+    _configure_logging(log_dir)
+    def _log(msg: str):
+        logger.info(msg)
+    _log(f"Pipeline started: input={input_dir!r} output={output_dir!r} force={force}")
     print(f"--------- Starting PDF Extraction Pipeline ---------")
     print(f"Using {WORKERS} worker processes")
     print(f"Job timeout set to {JOB_TIMEOUT_SECONDS} seconds.")
@@ -63,12 +75,8 @@ def run_pipeline(
         else:
             files_to_process.append(f)
 
-    print(f"Total PDFs found: {len(all_files)}")
-    print(f"Skipping: {skipped_count}")
-    print(f"To Process: {len(files_to_process)}")
-
-    logging.info(
-        f"Pipeline started. Found {len(all_files)} files. Processing {len(files_to_process)}. Skipped {skipped_count}."
+    _log(
+        f"Found {len(all_files)} files. Processing {len(files_to_process)}. Skipped {skipped_count}."
     )
 
     if not files_to_process:
@@ -112,22 +120,19 @@ def run_pipeline(
 
                 if "SUCCESS" in status:
                     database.mark_completed(file_path)
-                    if status == "SUCCESS_DIRECT":
-                        direct_extraction_success += 1
-                        method = "direct"
-                    elif status == "SUCCESS_OCR":
-                        ocr_extraction_success += 1
-                        method = "ocr"
+                    method = "direct" if status == "SUCCESS_DIRECT" else "ocr"
+                    if method == "direct":
+                        direct_success += 1
                     else:
-                        method = "unknown"
-
-                    log_msg = f"PROCESSED: {file_path} | Method: {method} | Time: {elapsed:.3f}s | Chars: {char_count}"
-                    logging.info(log_msg)
-
-                    if char_count == 0:
-                        logging.warning(
-                            f"EMPTY_OUTPUT: {file_path} extraction yielded 0 characters."
-                        )
+                        ocr_success += 1
+                    log_msg = (
+                        f"[ OK ] {basename} | {method.upper()} | "
+                        f"{elapsed:.1f}s | {char_count:,} chars"
+                    )
+                    _log(log_msg)
+                    print(
+                        f"  [{done_count}/{total}] OK    {basename}  ({elapsed:.1f}s)"
+                    )
 
                 else:
                     failures += 1
@@ -135,6 +140,8 @@ def run_pipeline(
                     print(f"\nERROR: {os.path.basename(file_path)} --> {message}")
                     logging.error(f"FAILURE: {file_path} - {message}")
                     method = "error"
+                    _log(f"[FAIL] {basename} -> {message}")
+                    print(f"  [{done_count}/{total}] ERROR {basename} -> {message}")
 
                 per_file_rows.append(
                     {
@@ -167,23 +174,23 @@ def run_pipeline(
                 logging.error(f"EXCEPTION: {file_path} - {e}")
 
     print("\n--------- Pipeline Complete ---------")
-    print(f"Successfully processed (Direct): {direct_extraction_success}")
-    print(f"Successfully processed (OCR): {ocr_extraction_success}")
-    print(f"Failed to process: {failures}")
-    if timeouts > 0:
-        print(f"  ({timeouts} of these failures were due to timeout)")
+    print(f"  Direct: {direct_success}  OCR: {ocr_success}  Failed: {failures}")
 
-    logging.info(
-        f"Pipeline finished. Direct: {direct_extraction_success}, OCR: {ocr_extraction_success}, Failed: {failures}, Timeouts: {timeouts}"
+    _log(
+        f"Pipeline finished. Direct: {direct_success}, OCR: {ocr_success}, "
+        f"Failed: {failures}, Timeouts: {timeouts}"
     )
 
-    # Save the pipeline summary
+    # Persist per-run summary
     summary_dir = "benchmark_output"
     os.makedirs(summary_dir, exist_ok=True)
-    csv_path = os.path.join(summary_dir, "pipeline_summary.csv")
-    json_path = os.path.join(summary_dir, "pipeline_summary.json")
     try:
-        with open(csv_path, "w", newline="", encoding="utf-8") as f:
+        with open(
+            os.path.join(summary_dir, "pipeline_summary.csv"),
+            "w",
+            newline="",
+            encoding="utf-8",
+        ) as f:
             writer = csv.DictWriter(
                 f,
                 fieldnames=["file", "status", "method", "seconds", "chars", "message"],
@@ -193,7 +200,9 @@ def run_pipeline(
     except Exception:
         pass
     try:
-        with open(json_path, "w", encoding="utf-8") as f:
+        with open(
+            os.path.join(summary_dir, "pipeline_summary.json"), "w", encoding="utf-8"
+        ) as f:
             json.dump(per_file_rows, f, ensure_ascii=False, indent=2)
     except Exception:
         pass

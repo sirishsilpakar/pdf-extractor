@@ -118,9 +118,10 @@ class TextFileHandler(FileSystemEventHandler):
             os.makedirs(os.path.dirname(out_path), exist_ok=True)
 
             # Read the input file
-            with pymupdf.open(file_path) as doc, open(
-                out_path, "w", encoding="utf-8"
-            ) as f_out:
+            with (
+                pymupdf.open(file_path) as doc,
+                open(out_path, "w", encoding="utf-8") as f_out,
+            ):
                 for page_num, page in enumerate(doc):
                     text = page.get_text()
                     processed_content = preprocess_text(text)
