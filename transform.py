@@ -1,64 +1,57 @@
 import os, sys
 import time
 import re
-import pymupdf
 from pathlib import Path
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
-import spacy
-from collections import Counter
 
-# load spacy model once (do this outside function for efficiency)
-# nlp = spacy.load("en_core_web_sm", disable=["ner", "parser"])
+RE_HYPHEN = re.compile(r"-\n")
+RE_WHITESP = re.compile(r"\s+")
+RE_BULLET = re.compile(r'[•●▪◆▶►■□➢→-]+')
+RE_UNICODE = re.compile(r'[\u2022\u25CF\u25AA\u25C6\u25BA\u25B6\u25A0\u25A1\u279A\u2192]')
+RE_REPEAT = re.compile(r'[.•●▪◆▶►■□➢→▲\-]{2,}')
+RE_NON_ALPHA = re.compile(r'[^a-zA-Z0-9äöüÄÖÜß.,!?()\[\]{}:;\'" \n-]')
+RE_PAGE_WHITELIST = [
+    re.compile(r'\b\d{1,3}(?:,\d{3})+\b'),
+    re.compile(r'\b\d+,\b'),
+    re.compile(r'\b\d{1,2}:\d{2}(?:\s*[APap][Mm])?\b')
+]
+RE_PAGE_PATTERN = [
+    re.compile(r'\b[Pp]age\s*\d+\b'),
+    re.compile(r'\b\d+\s*[-–]\s*\d+\b'),
+    re.compile(r'\b\d+\s+[oO][fF]\s+\d+\b'),
+    re.compile(r'(?<!\d)\b[ivxlcdm]+\b(?!\d)'),
+    re.compile(r'\b(?:[1-9]|[1-9][0-9]|[1-3]00)\b'),
+    re.compile(r'\b\d+\.\b'),
+    re.compile(r'\b\d+\.\d+\b'),
+]
 
 
 def preprocess_text(text):
     # Normalize whitespace & fix hyphenation
-    text = re.sub(r"-\n", "", text)  # remove line-break hyphenation
-    text = re.sub(r"\s+", " ", text)  # collapse whitespace
-    text = re.sub(r"[•●▪◆▶►■□➢→-]+", " ", text)  # common bullets/arrows
-    text = re.sub(
-        r"[\u2022\u25CF\u25AA\u25C6\u25BA\u25B6\u25A0\u25A1\u279A\u2192]", " ", text
-    )  # unicode bullets
-    text = re.sub(r"[.•●▪◆▶►■□➢→▲\-]{2,}", "", text)  # remove repetitive spc. char
-
+    text = RE_HYPHEN.sub("", text)      # remove line-break hyphenation
+    text = RE_WHITESP.sub(" ", text)     # collapse whitespace
+    text = RE_BULLET.sub(' ', text)  # common bullets/arrows
+    text = RE_UNICODE.sub(' ', text)  # unicode bullets
+    text = RE_REPEAT.sub('', text) # remove repetitive spc. char
+    
     # optional: strip stray non-alphanumeric symbols (except .,!? and spaces)
-    text = re.sub(r'[^a-zA-Z0-9äöüÄÖÜß.,!?()\[\]{}:;\'" \n-]', " ", text)
+    text = RE_NON_ALPHA.sub(' ', text)
 
     # Replace fancy quotes with normal
     text = text.replace("“", '"').replace("”", '"').replace("’", "'")
 
     text = remove_page_numbers(text)
-    text = re.sub(r"__KEEP\d+__(.*?)__KEEP\d+__", r"\1", text)
-    # Lemmatization & stop word removal (For later)
-    # doc = nlp(text)
-    # tokens = [token.lemma_ for token in doc if not token.is_stop and token.is_alpha]
-    # return " ".join(tokens)
+    text = re.sub(r'__KEEP\d+__(.*?)__KEEP\d+__', r'\1', text)
     return text
 
 
 def remove_page_numbers(text):
-    whitelist = [
-        r"\b\d{1,3}(?:,\d{3})+\b",  # numbers with commas e.g. 1,000 / 2,000
-        r"\b\d+,\b",  # numbers ending with comma e.g. "1,"
-        r"\b\d{1,2}:\d{2}(?:\s*[APap][Mm])?\b",  # time formats: 14:09 / 10:20 PM
-    ]
-    for i, pattern in enumerate(whitelist):
-        text = re.sub(pattern, lambda m: f"__KEEP{i}__{m.group(0)}__KEEP{i}__", text)
-    patterns = [
-        r"\b[Pp]age\s*\d+\b",  # "Page 1" / "page 12"
-        r"\b\d+\s*[-–]\s*\d+\b",  # "1-5"
-        r"\b\d+\s+[oO][fF]\s+\d+\b",  # "1 of 10"
-        r"(?<!\d)\b[ivxlcdm]+\b(?!\d)",  # roman numerals like iv, x, vii (not part of a word/number)
-        # standalone small numbers (likely page numbers, not years)
-        r"\b(?:[1-9]|[1-9][0-9]|[1-3]00)\b",
-        r"\b\d+\.\b",  # numbers ending with a dot ("1.")
-        r"\b\d+\.\d+\b",  # decimals / section numbers ("1.1", "2.0")
-    ]
-    for pattern in patterns:
-        text = re.sub(pattern, "", text)
-    return re.sub(r"\s+", " ", text).strip()
-
+  for i, pattern in enumerate(RE_PAGE_WHITELIST):
+    text = pattern.sub(lambda m: f"__KEEP{i}__{m.group(0)}__KEEP{i}__", text)
+  for pattern in RE_PAGE_PATTERN:
+    text = pattern.sub('', text)
+  return re.sub(r'\s+', ' ', text).strip()
 
 def clean_page_text(text, header_candidates, footer_candidates):
     lines = text.splitlines()
@@ -84,6 +77,17 @@ def clean_page_text(text, header_candidates, footer_candidates):
     return "\n".join(cleaned_lines)
 
 
+def wait_for_file(path, timeout=30, interval=0.5):
+  prev, waited = -1, 0
+  while waited < timeout:
+      size = os.path.getsize(path)
+      if size == prev and size > 0:
+          return True
+      prev = size
+      time.sleep(interval)
+      waited += interval
+  return False
+
 class TextFileHandler(FileSystemEventHandler):
     def __init__(self, input_dir, output_dir):
         self.input_dir = Path(input_dir)
@@ -103,40 +107,38 @@ class TextFileHandler(FileSystemEventHandler):
             print(f"\nNew .txt file detected: {file_path.name}")
             self.process_file(file_path)
 
-    def process_file(self, file_path):
+    def process_file(self, file_path, out_root = '2nd_output'):
         """
         Process the text file - customize this method based on your needs
         """
         try:
-            # Adding delay so that the extraction processing is completed
-            time.sleep(3)
-            print("Start processing files...")
-            # preserve folder strucutre
-            rel_path = os.path.relpath(file_path, "extracted_files")
-            rel_no_ext = os.path.splitext(rel_path)[0]  # remove .pdf
-            out_path = os.path.join("processed_files", rel_no_ext + ".txt")
-            os.makedirs(os.path.dirname(out_path), exist_ok=True)
-
-            # Read the input file
-            with pymupdf.open(file_path) as doc, open(
-                out_path, "w", encoding="utf-8"
-            ) as f_out:
-                for page_num, page in enumerate(doc):
-                    text = page.get_text()
-                    processed_content = preprocess_text(text)
-                    f_out.write(processed_content)
-                print(f"Processed file saved: {out_path}")
-            return os.path.basename(file_path), text
-
+          # Adding delay so that the extraction processing is completed
+          if not wait_for_file(file_path):
+            print(f"Timeout waiting for {file_path}")
+            return
+          print("Start processing files...")
+          # preserve folder strucutre
+          rel_path = os.path.relpath(file_path, "1st_output")
+          rel_no_ext = os.path.splitext(rel_path)[0]  # remove .pdf
+          out_path = os.path.join(out_root, rel_no_ext + ".txt")
+          os.makedirs(os.path.dirname(out_path), exist_ok=True)
+          
+          # Read the input file
+          with open(file_path, "r", encoding="utf-8") as f_in, open(out_path, "w", encoding="utf-8") as f_out: 
+            text = f_in.read() 
+            f_out.write(preprocess_text(text))
+            print(f"Processed file saved: {out_path}")
+          return os.path.basename(file_path), text
+            
         except Exception as e:
             print(f"Error processing {file_path}: {e}")
 
 
 def main():
     # Configuration
-    INPUT_DIR = "./extracted_files"  # Directory to watch
-    OUTPUT_DIR = "./processed_files"  # Directory for processed files
-
+    INPUT_DIR = "./1st_output"      # Directory to watch
+    OUTPUT_DIR = "./2nd_output" # Directory for processed files
+    
     # Create input directory if it doesn't exist
     Path(INPUT_DIR).mkdir(parents=True, exist_ok=True)
 
