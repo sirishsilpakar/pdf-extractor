@@ -1,0 +1,33 @@
+[build-system]
+requires = ["setuptools>=42", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pdf-extractor"
+version = "0.8.1"
+description = "A PDF extraction tool with OCR support and reliability features."
+authors = [
+    {name = "Sanjay Gurung", email = "gurung@students.uni-marburg.de"},
+    {name = "Sapna Luthra", email = "luthra@students.uni-marburg.de"},
+    {name = "Sirish Silpakar", email = "silpakar@students.uni-marburg.de"},
+]
+readme = "README.md"
+requires-python = ">=3.8"
+dependencies = [
+    "PyMuPDF>=1.26.3",
+    "tqdm>=4.67.1",
+    "Pillow",
+    "pytesseract",
+]
+
+[project.scripts]
+pdf-extractor-full = "main:main"
+
+[tool.setuptools]
+py-modules = ["main", "extractor", "worker", "config", "database"]
+
+[project.optional-dependencies]
+dev = [
+    "pre-commit>=3.0.0",
+    "black>=24.0.0",
+]
