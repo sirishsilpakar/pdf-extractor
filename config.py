@@ -77,4 +77,9 @@ DB_PATH = os.path.abspath(
 )
 
 # Directory where per-run log files are stored
-LOG_DIR = os.path.abspath(os.getenv("EXTRACTOR_LOG_DIR", os.path.join(_CURRENT_PATH, "logs")))
+LOG_DIR = os.path.abspath(
+    os.getenv("EXTRACTOR_LOG_DIR", os.path.join(_CURRENT_PATH, "logs"))
+)
+
+# Maximum number of pipeline_*.log files to keep (oldest are deleted)
+LOG_MAX_FILES = int(os.getenv("EXTRACTOR_LOG_MAX_FILES", "100"))
