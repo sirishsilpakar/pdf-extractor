@@ -107,7 +107,7 @@ class TextFileHandler(FileSystemEventHandler):
             print(f"\nNew .txt file detected: {file_path.name}")
             self.process_file(file_path)
 
-    def process_file(self, file_path, out_root = '2nd_output'):
+    def process_file(self, file_path):
         """
         Process the text file - customize this method based on your needs
         """
@@ -118,9 +118,9 @@ class TextFileHandler(FileSystemEventHandler):
             return
           print("Start processing files...")
           # preserve folder strucutre
-          rel_path = os.path.relpath(file_path, "1st_output")
+          rel_path = os.path.relpath(file_path, self.input_dir)
           rel_no_ext = os.path.splitext(rel_path)[0]  # remove .pdf
-          out_path = os.path.join(out_root, rel_no_ext + ".txt")
+          out_path = os.path.join(self.output_dir, rel_no_ext + ".txt")
           os.makedirs(os.path.dirname(out_path), exist_ok=True)
           
           # Read the input file
@@ -136,8 +136,8 @@ class TextFileHandler(FileSystemEventHandler):
 
 def main():
     # Configuration
-    INPUT_DIR = "./1st_output"      # Directory to watch
-    OUTPUT_DIR = "./2nd_output" # Directory for processed files
+    INPUT_DIR = "./extracted_files"      # Directory to watch
+    OUTPUT_DIR = "./processed_files" # Directory for processed files
     
     # Create input directory if it doesn't exist
     Path(INPUT_DIR).mkdir(parents=True, exist_ok=True)
