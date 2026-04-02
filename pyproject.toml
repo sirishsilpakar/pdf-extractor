@@ -4,27 +4,35 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "pdf-extractor"
-version = "0.8.1"
-description = "A PDF extraction tool with OCR support and reliability features."
+version = "2.0.0"
+description = "A PDF extraction tool with OCR support, reliability features, and a web-based dashboard UI."
 authors = [
     {name = "Sanjay Gurung", email = "gurung@students.uni-marburg.de"},
     {name = "Sapna Luthra", email = "luthra@students.uni-marburg.de"},
     {name = "Sirish Silpakar", email = "silpakar@students.uni-marburg.de"},
 ]
 readme = "README.md"
-requires-python = ">=3.8"
+requires-python = ">=3.9"
 dependencies = [
     "PyMuPDF>=1.26.3",
     "tqdm>=4.67.1",
     "Pillow",
     "pytesseract",
+    "fastapi>=0.110.0",
+    "uvicorn[standard]>=0.29.0",
+    "python-multipart>=0.0.9",
 ]
 
 [project.scripts]
 pdf-extractor-full = "main:main"
+pdf-extractor-ui   = "server:start"
 
 [tool.setuptools]
-py-modules = ["main", "extractor", "worker", "config", "database"]
+py-modules = ["main", "extractor", "worker", "config", "database", "server"]
+py-packages = ["api"]
+
+[tool.setuptools.package-data]
+"*" = ["ui/*"]
 
 [project.optional-dependencies]
 dev = [
