@@ -1,0 +1,395 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>PDF TextExtract — Dashboard</title>
+  <meta name="description" content="Browser-based dashboard for the PDF TextExtract pipeline. Import PDFs, track extraction progress in real-time, and search extracted text." />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/ui/style.css" />
+</head>
+<body>
+  <!-- Sidebar -->
+  <aside class="sidebar" id="sidebar">
+    <div class="logo">
+      <span class="logo-icon">P</span>
+      <span class="logo-text">PDF TextExtract</span>
+    </div>
+
+    <nav class="nav">
+      <a href="#" class="nav-item active" id="nav-dashboard" data-view="dashboard">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
+        Dashboard
+      </a>
+      <a href="#" class="nav-item" id="nav-results" data-view="results">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
+        Results
+      </a>
+      <a href="#" class="nav-item" id="nav-files" data-view="files">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+        Files
+      </a>
+      <a href="#" class="nav-item" id="nav-search" data-view="search">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+        Search
+      </a>
+      <a href="#" class="nav-item" id="nav-settings" data-view="settings">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.07 4.93l-1.41 1.41M4.93 4.93l1.41 1.41M19.07 19.07l-1.41-1.41M4.93 19.07l1.41-1.41M12 2v2M12 20v2M2 12h2M20 12h2"/></svg>
+        Settings
+      </a>
+    </nav>
+
+    <div class="quick-stats">
+      <div class="qs-label">QUICK STATS</div>
+      <div class="qs-row"><span>Total</span><span id="qs-total" class="qs-val">0</span></div>
+      <div class="qs-row"><span>Done</span><span id="qs-done" class="qs-val done">0</span></div>
+      <div class="qs-row"><span>Failed</span><span id="qs-failed" class="qs-val failed">0</span></div>
+    </div>
+  </aside>
+
+  <!-- Main-->
+  <div class="main-wrap">
+
+    <!-- Header -->
+    <header class="topbar">
+      <div class="topbar-actions">
+        <button class="btn btn-outline" id="btn-import-file">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="12" y1="18" x2="12" y2="12"/><line x1="9" y1="15" x2="15" y2="15"/></svg>
+          Import File
+        </button>
+        <button class="btn btn-outline" id="btn-import-folder">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/><line x1="12" y1="11" x2="12" y2="17"/><line x1="9" y1="14" x2="15" y2="14"/></svg>
+          Import Folder
+        </button>
+        <!-- hidden file inputs -->
+        <input type="file" id="input-files" accept=".pdf" multiple hidden />
+        <input type="file" id="input-folder" accept=".pdf" webkitdirectory multiple hidden />
+      </div>
+      <div class="search-wrap" id="search-bar-wrap">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+        <input type="text" id="search-input" placeholder="Search extracted text…" />
+      </div>
+      <button class="icon-btn" id="btn-theme" title="Toggle theme">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+      </button>
+    </header>
+
+    <!-- Views -->
+    <div class="content-area">
+
+      <!-- Dashboard view -->
+      <section class="view active" id="view-dashboard">
+        <div class="content-with-panel">
+          <div class="content-main">
+
+            <!-- Processing card (visible while running) -->
+            <div class="card processing-card" id="processing-card" style="display:none">
+              <div class="card-header">
+                <span class="pulse-dot"></span>
+                <h2>Processing Dashboard</h2>
+                <div class="card-actions">
+                  <button class="btn btn-sm btn-danger" id="btn-cancel">
+                    <svg viewBox="0 0 24 24" fill="currentColor" width="14" height="14"><line x1="18" y1="6" x2="6" y2="18" stroke="white" stroke-width="2"/><line x1="6" y1="6" x2="18" y2="18" stroke="white" stroke-width="2"/></svg>
+                    Cancel
+                  </button>
+                </div>
+              </div>
+
+              <div class="progress-wrap">
+                <div class="progress-label">
+                  <span>Overall Progress</span>
+                  <span id="pct-label">0%</span>
+                </div>
+                <div class="progress-track">
+                  <div class="progress-bar" id="overall-progress" style="width:0%"></div>
+                </div>
+              </div>
+
+              <div class="stat-tiles">
+                <div class="tile">
+                  <div class="tile-label">Elapsed</div>
+                  <div class="tile-val" id="tile-elapsed">00:00</div>
+                </div>
+                <div class="tile">
+                  <div class="tile-label">ETA</div>
+                  <div class="tile-val" id="tile-eta">—</div>
+                </div>
+                <div class="tile">
+                  <div class="tile-label">Processed</div>
+                  <div class="tile-val" id="tile-processed">0/0</div>
+                </div>
+                <div class="tile">
+                  <div class="tile-label">Remaining</div>
+                  <div class="tile-val" id="tile-remaining">0</div>
+                </div>
+              </div>
+
+              <div class="current-file" id="current-file-row" style="display:none">
+                <span class="pulse-dot sm"></span>
+                <span>Currently processing:</span>
+                <strong id="current-file-name">—</strong>
+              </div>
+            </div>
+
+            <!-- Drop-zone (visible when idle) -->
+            <div class="drop-zone" id="drop-zone">
+              <div class="drop-icon">
+                <svg viewBox="0 0 64 64" fill="none" stroke="currentColor" stroke-width="2">
+                  <rect x="8" y="8" width="48" height="48" rx="6"/>
+                  <path d="M32 20v24M22 30l10-10 10 10"/>
+                </svg>
+              </div>
+              <p class="drop-title">Drop PDFs here or use the import buttons above</p>
+              <p class="drop-hint">Supports single files and entire folders</p>
+            </div>
+
+            <!-- File table -->
+            <div class="card" id="file-table-card" style="display:none">
+              <div class="card-header">
+                <h2 id="file-table-title">Files</h2>
+                <button class="btn btn-primary btn-sm" id="btn-start" style="display:none">
+                  Start Extraction
+                </button>
+              </div>
+              <div class="table-wrap">
+                <table class="file-table" id="file-table">
+                  <thead>
+                    <tr>
+                      <th><input type="checkbox" id="chk-all" /></th>
+                      <th>File Name</th>
+                      <th>Status</th>
+                      <th>Size</th>
+                      <th>Progress</th>
+                      <th>Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody id="file-tbody"></tbody>
+                </table>
+              </div>
+            </div>
+
+            <!-- Activity log -->
+            <div class="card log-card" id="log-card">
+              <div class="card-header">
+                <h2>
+                  Activity Log
+                  <span class="badge badge-muted" id="log-count">0 entries</span>
+                </h2>
+                <button class="btn btn-sm btn-ghost" id="btn-pause-log">
+                  <svg viewBox="0 0 24 24" fill="currentColor" width="14" height="14"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>
+                  Pause
+                </button>
+              </div>
+              <div class="log-body" id="log-body"></div>
+            </div>
+
+          </div>
+
+          <!-- Settings panel -->
+          <aside class="settings-panel">
+            <h3>Processing Settings</h3>
+
+            <div class="setting-item">
+              <div class="setting-info">
+                <span class="setting-name">Remove Header</span>
+                <span class="setting-desc">Strip header text from pages</span>
+              </div>
+              <label class="toggle">
+                <input type="checkbox" id="s-remove-header" checked />
+                <span class="slider"></span>
+              </label>
+            </div>
+
+            <div class="setting-item">
+              <div class="setting-info">
+                <span class="setting-name">Remove Footer</span>
+                <span class="setting-desc">Strip footer text from pages</span>
+              </div>
+              <label class="toggle">
+                <input type="checkbox" id="s-remove-footer" checked />
+                <span class="slider"></span>
+              </label>
+            </div>
+
+            <div class="setting-item">
+              <div class="setting-info">
+                <span class="setting-name">Remove Page Numbers</span>
+                <span class="setting-desc">Remove page number markers</span>
+              </div>
+              <label class="toggle">
+                <input type="checkbox" id="s-remove-page-numbers" />
+                <span class="slider"></span>
+              </label>
+            </div>
+
+            <div class="setting-item">
+              <div class="setting-info">
+                <span class="setting-name">Remove Numeric Values</span>
+                <span class="setting-desc">Strip years, amounts, etc.</span>
+              </div>
+              <label class="toggle">
+                <input type="checkbox" id="s-remove-numeric" />
+                <span class="slider"></span>
+              </label>
+            </div>
+
+            <div class="setting-item">
+              <div class="setting-info">
+                <span class="setting-name">Enable Lemmatization</span>
+                <span class="setting-desc">Reduce words to base form</span>
+              </div>
+              <label class="toggle">
+                <input type="checkbox" id="s-lemmatize" />
+                <span class="slider"></span>
+              </label>
+            </div>
+
+            <div class="setting-item">
+              <div class="setting-info">
+                <span class="setting-name">Apply to All Files</span>
+                <span class="setting-desc">Use same settings for batch</span>
+              </div>
+              <label class="toggle">
+                <input type="checkbox" id="s-apply-all" checked />
+                <span class="slider"></span>
+              </label>
+            </div>
+
+            <div class="setting-divider"></div>
+
+            <div class="preset-section">
+              <label class="setting-name">Save Preset</label>
+              <input type="text" class="preset-input" id="preset-name" placeholder="Preset name…" />
+              <button class="btn btn-outline btn-sm full-width" id="btn-save-preset">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
+                Save Preset
+              </button>
+            </div>
+
+            <div id="presets-list" class="presets-list"></div>
+          </aside>
+        </div>
+      </section>
+
+      <!-- Results view -->
+      <section class="view" id="view-results">
+        <div class="content-with-panel results-layout">
+
+          <!-- Tree panel -->
+          <div class="content-main">
+            <div class="card">
+              <div class="card-header">
+                <h2>Extraction Results</h2>
+                <button class="btn btn-outline btn-sm" id="btn-refresh-results">Refresh</button>
+              </div>
+              <div id="results-tree-wrap" class="results-tree-wrap"></div>
+            </div>
+          </div>
+
+          <!-- Inline text viewer -->
+          <div class="text-viewer-panel" id="text-viewer-panel" style="display:none">
+            <div class="viewer-header">
+              <span class="viewer-filename" id="viewer-filename">—</span>
+              <button class="icon-btn" id="btn-close-viewer" title="Close">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+              </button>
+            </div>
+            <div class="viewer-meta" id="viewer-meta"></div>
+            <div class="viewer-body" id="viewer-body"><div class="search-empty">Select a file to preview its content.</div></div>
+          </div>
+
+        </div>
+      </section>
+
+      <!-- Files view -->
+      <section class="view" id="view-files">
+        <div class="card">
+          <div class="card-header">
+            <h2>Extracted Files</h2>
+            <button class="btn btn-outline btn-sm" id="btn-refresh-files">Refresh</button>
+          </div>
+          <div class="table-wrap">
+            <table class="file-table">
+              <thead>
+                <tr>
+                  <th>File Name</th>
+                  <th>Size</th>
+                  <th>Last Modified</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody id="extracted-tbody"></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <!-- Search view -->
+      <section class="view" id="view-search">
+        <div class="card">
+          <div class="card-header"><h2>Search Extracted Text</h2></div>
+          <div class="search-box-wrap">
+            <input type="text" id="search-main" class="search-main-input" placeholder="Enter search term…" />
+            <button class="btn btn-primary" id="btn-search">Search</button>
+          </div>
+          <div id="search-results" class="search-results"></div>
+        </div>
+      </section>
+
+      <!-- Settings view -->
+      <section class="view" id="view-settings">
+        <div class="card">
+          <div class="card-header"><h2>Application Settings</h2></div>
+          <div class="settings-grid">
+            <div class="settings-group">
+              <h4>Pipeline</h4>
+              <div class="setting-row">
+                <label for="cfg-workers">Worker Processes</label>
+                <input type="number" id="cfg-workers" min="1" max="32" value="4" class="cfg-input" />
+              </div>
+              <div class="setting-row">
+                <label for="cfg-dpi">OCR DPI</label>
+                <select id="cfg-dpi" class="cfg-input">
+                  <option value="150">150 — Fast</option>
+                  <option value="200" selected>200 — Balanced</option>
+                  <option value="300">300 — High Quality</option>
+                </select>
+              </div>
+              <div class="setting-row">
+                <label for="cfg-timeout">Job Timeout (s)</label>
+                <input type="number" id="cfg-timeout" min="30" max="3600" value="120" class="cfg-input" />
+              </div>
+            </div>
+            <div class="settings-group">
+              <h4>Output</h4>
+              <div class="setting-row">
+                <label for="cfg-output-dir">Output Directory</label>
+                <input type="text" id="cfg-output-dir" value="extracted_files" class="cfg-input" />
+              </div>
+            </div>
+          </div>
+          <p class="settings-note">⚠ Settings page is informational — applying config changes requires a server restart.</p>
+        </div>
+      </section>
+
+    </div><!-- /content-area -->
+  </div><!-- /main-wrap -->
+
+  <!-- Reprocess confirmation modal -->
+  <div class="modal-overlay" id="reprocess-modal" style="display:none" role="dialog" aria-modal="true">
+    <div class="modal">
+      <h3>Files Already Processed</h3>
+      <p id="reprocess-modal-msg" style="color:var(--text-muted);font-size:0.875rem;margin:0.75rem 0 1.25rem"></p>
+      <div class="modal-actions">
+        <button class="btn btn-outline" id="modal-btn-skip">Process new files only</button>
+        <button class="btn btn-primary" id="modal-btn-reprocess">Reprocess all</button>
+        <button class="btn btn-ghost" id="modal-btn-cancel">Cancel</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="/ui/app.js"></script>
+</body>
+</html>
