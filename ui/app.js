@@ -5,14 +5,13 @@
 // Constants
 
 const API = '';        // same origin
-const WS_URL = `ws://${location.host}/api/ws`;
-console.log(WS_URL, "@ws_url");
+const SSE_URL = `${location.origin}/api/events`;
 
 // State
 
 const state = {
-  ws: null,
-  wsConnected: false,
+  es: null,              // EventSource instance
+  sseConnected: false,
   // Pending (not-yet-submitted) files chosen by the user
   pendingFiles: [],      // Array of { file: File, id: string, fileId: null|string }
   // Job file list from server  
@@ -82,33 +81,40 @@ document.querySelectorAll('.nav-item').forEach(item => {
   });
 });
 
-// WebSocket
+// Server-Sent Events
+// EventSource handles reconnection automatically with no manual retry needed.
 
-function connectWS() {
-  const ws = new WebSocket(WS_URL);
-  state.ws = ws;
+function connectSSE() {
+  // Close any existing connection before opening a new one.
+  if (state.es) {
+    state.es.close();
+    state.es = null;
+  }
 
-  ws.onopen = () => {
-    state.wsConnected = true;
+  const es = new EventSource(SSE_URL);
+  state.es = es;
+
+  es.onopen = () => {
+    state.sseConnected = true;
     addLog('[INFO] Connected to server.', 'info');
   };
 
-  ws.onmessage = ev => {
+  // All server events arrive here (the server sends un-typed `data:` lines).
+  es.onmessage = ev => {
     let msg;
     try { msg = JSON.parse(ev.data); } catch { return; }
-    if (msg.type === 'ping') return;
     if (msg.type === 'state_update') applyServerState(msg);
-    if (msg.type === 'log') addLog(msg.message, classifyLog(msg.message));
+    if (msg.type === 'log')          addLog(msg.message, classifyLog(msg.message));
     if (msg.type === 'file_progress') applyFileProgress(msg);
+    // 'ping' / keepalive comments (': keepalive') are invisible to onmessage
   };
 
-  ws.onclose = () => {
-    state.wsConnected = false;
-    addLog('[WARN] Disconnected. Reconnecting in 3s…', 'warn');
-    setTimeout(connectWS, 3000);
+  es.onerror = () => {
+    // EventSource automatically retries, just update the flag.
+    state.sseConnected = false;
+    addLog('[WARN] SSE connection interrupted. Browser will reconnect', 'warn');
+    // Do NOT call es.close() here; let the browser handle reconnection.
   };
-
-  ws.onerror = () => ws.close();
 }
 
 function classifyLog(msg) {
@@ -747,7 +753,7 @@ function escHtml(s) {
 
 loadSettings();
 renderPresets();
-connectWS();
+connectSSE();
 
 // Poll status once on load to sync initial state (in case page refreshed mid-job)
 fetch(`${API}/api/status`).then(r => r.json()).then(applyServerState).catch(() => {});

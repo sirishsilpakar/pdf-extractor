@@ -22,7 +22,7 @@ from fastapi.staticfiles import StaticFiles
 # Ensure project root is on sys.path when launched as a script
 sys.path.insert(0, str(Path(__file__).parent))
 
-from api import job_manager, ws
+from api import job_manager, sse
 from api.routes import router
 
 
@@ -30,8 +30,8 @@ from api.routes import router
 async def lifespan(application: "FastAPI"):
     # Startup: wire up WebSocket loop reference and initialise DB
     loop = asyncio.get_event_loop()
-    ws.set_event_loop(loop)
-    job_manager.register_broadcast(ws.broadcast)
+    sse.set_event_loop(loop)
+    job_manager.register_broadcast(sse.broadcast)
 
     import database
 
@@ -48,7 +48,7 @@ app = FastAPI(
     description=(
         "REST API for the PDF TextExtract pipeline.\n\n"
         "**Interactive docs:** `/docs` (Swagger UI) · `/redoc` (ReDoc)\n\n"
-        "**WebSocket:** `ws://localhost:8080/api/ws` — real-time progress & log stream."
+        "**SSE stream:** `GET http://localhost:8080/api/events` real-time progress & log stream."
     ),
     docs_url="/docs",
     redoc_url="/redoc",

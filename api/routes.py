@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import shutil
 import uuid
@@ -13,14 +14,13 @@ from fastapi import (
     File,
     HTTPException,
     Query,
+    Request,
     UploadFile,
-    WebSocket,
-    WebSocketDisconnect,
 )
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
 
-from api import job_manager, ws
+from api import job_manager, sse
 
 _PKG_DIR = Path(__file__).parent.parent
 UPLOAD_DIR = _PKG_DIR / "uploads"
@@ -323,21 +323,50 @@ async def delete_file(rel_path: str):
     return {"ok": True}
 
 
-# WebSocket
-@router.websocket("/ws")
-async def websocket_endpoint(websocket: WebSocket):
-    """Real-time event stream. Pushes `state_update`, `log`, and `file_progress` messages."""
-    await ws.connect(websocket)
-    try:
-        import json
+# Server-Sent Events
+@router.get(
+    "/events",
+    tags=[TAG_WS],
+    summary="SSE real-time event stream",
+    description=(
+        "Long-lived HTTP stream (`text/event-stream`). "
+        "Pushes `state_update`, `log`, and `file_progress` JSON objects. "
+        "The browser's built-in `EventSource` API handles reconnection automatically."
+    ),
+)
+async def sse_events(request: Request):
+    """One-directional server-push stream.  The browser never sends data here;
+    commands (start, cancel) go through the regular REST endpoints.
+    """
+    q = await sse.subscribe()
 
-        await websocket.send_text(
-            json.dumps({"type": "state_update", **job_manager.get_state()})
-        )
-        while True:
-            await asyncio.sleep(30)
-            await websocket.send_text('{"type":"ping"}')
-    except WebSocketDisconnect:
-        ws.disconnect(websocket)
-    except Exception:
-        ws.disconnect(websocket)
+    async def generate():
+        # Immediately push the current state so the UI syncs on connect.
+        initial = json.dumps({"type": "state_update", **job_manager.get_state()})
+        yield f"data: {initial}\n\n"
+
+        try:
+            while True:
+                # Check if the client closed the tab / navigated away.
+                if await request.is_disconnected():
+                    break
+                try:
+                    # Block up to 25 s waiting for the next event.
+                    event = await asyncio.wait_for(q.get(), timeout=25)
+                    yield f"data: {json.dumps(event)}\n\n"
+                except asyncio.TimeoutError:
+                    # SSE comment line keeps the connection alive without
+                    # triggering `onmessage` in the browser.
+                    yield ": keepalive\n\n"
+        finally:
+            sse.unsubscribe(q)
+
+    return StreamingResponse(
+        generate(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",  # tells nginx not to buffer this response
+            "Connection": "keep-alive",
+        },
+    )
