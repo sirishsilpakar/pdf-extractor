@@ -16,6 +16,7 @@ from config import (
     OCR_ON_IMAGE_AREA_THRESHOLD,
     OCR_LOW_TEXT_LENGTH_THRESHOLD,
 )
+import transform as t
 
 pymupdf.TOOLS.mupdf_display_errors(False)
 
@@ -255,7 +256,7 @@ def process_file(
 
         final_text = "".join(full_text)
         with open(out_txt_path, "w", encoding="utf-8") as f:
-            f.write(final_text)
+            f.write(t.preprocess_text(final_text))
 
         with open(out_meta_path, "w", encoding="utf-8") as f:
             json.dump(metadata_report, f, indent=2)
