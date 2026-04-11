@@ -68,3 +68,18 @@ OCR_ON_IMAGE_AREA_THRESHOLD = float(os.getenv("OCR_ON_IMAGE_AREA_THRESHOLD", "0.
 
 # If direct extraction returns fewer characters than this, fallback to OCR for that page.
 OCR_LOW_TEXT_LENGTH_THRESHOLD = 10
+
+_CURRENT_PATH = os.path.dirname(os.path.abspath(__file__))
+
+# SQLite database path — override with EXTRACTOR_DB_PATH env var
+DB_PATH = os.path.abspath(
+    os.getenv("EXTRACTOR_DB_PATH", os.path.join(_CURRENT_PATH, "state.db"))
+)
+
+# Directory where per-run log files are stored
+LOG_DIR = os.path.abspath(
+    os.getenv("EXTRACTOR_LOG_DIR", os.path.join(_CURRENT_PATH, "logs"))
+)
+
+# Maximum number of pipeline_*.log files to keep (oldest are deleted)
+LOG_MAX_FILES = int(os.getenv("EXTRACTOR_LOG_MAX_FILES", "100"))

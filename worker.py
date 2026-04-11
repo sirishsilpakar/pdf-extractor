@@ -45,8 +45,10 @@ def get_page_image_ratio(page):
 
 
 def ocr_page(page, config_args):
-    """Performs OCR on a single page using Tesseract."""
+    """Performs OCR on a single page using a library like Tesseract."""
+    pix = gray_pix = img = None
     try:
+        import logging
         import pytesseract
 
         pix = page.get_pixmap(dpi=OCR_DPI)
@@ -60,13 +62,26 @@ def ocr_page(page, config_args):
             timeout=TESSERACT_PAGE_TIMEOUT_SECONDS,
         )
         return text
-    except Exception:
+    except (ImportError, Exception) as e:
+        import logging
+
+        err_str = str(e).lower()
+        # Detect if the OCR engine/dependency is missing
+        if (
+            isinstance(e, ImportError)
+            or "tesseractnotfounderror" in type(e).__name__.lower()
+            or "tesseract is not installed" in err_str
+        ):
+            logging.error(f"OCR engine or library missing: {e}")
+            return "__OCR_ENGINE_MISSING__"
+
+        logging.error(f"OCR processing failed: {e}")
         return ""
     finally:
         pix = gray_pix = img = None
 
 
-def process_page(file_path, page_number):
+def process_page(file_path, page_number, total_pages=0, event_queue=None):
     """Process a single page of a PDF.
     Returns: (page_number, text, method, metadata_dict)
     """
@@ -74,6 +89,8 @@ def process_page(file_path, page_number):
     text = ""
     meta = {}
     start_time = time.time()
+    basename = os.path.basename(file_path)
+    pid = os.getpid()
 
     try:
         # Re-open doc for thread safety if called in parallel
@@ -114,6 +131,17 @@ def process_page(file_path, page_number):
                 config_args = f"--oem {TESSERACT_OEM} --psm {TESSERACT_PSM}"
                 text = ocr_page(page, config_args)
 
+                if text == "__OCR_ENGINE_MISSING__":
+                    method = "error"
+                    text = ""
+                    meta["error"] = "OCR engine or dependency is missing"
+                    if event_queue is not None:
+                        # This is where the worker process signals the main process that the OCR engine is missing by putting a specific message in the event queue
+                        try:
+                            event_queue.put_nowait({"type": "ocr_engine_missing"})
+                        except Exception:
+                            pass
+
             meta["char_count"] = len(text)
 
     except Exception as e:
@@ -124,10 +152,37 @@ def process_page(file_path, page_number):
     duration = time.time() - start_time
     meta["seconds"] = round(duration, 3)
 
+    page_num_1 = page_number + 1  # 1-indexed for display
+    total_label = total_pages if total_pages else "?"
+    print(
+        f"  [W{pid}] {basename}  page {page_num_1}/{total_label}  "
+        f"{method.upper():<6}  {duration:.2f}s"
+    )
+
+    if event_queue is not None:
+        # Event added to signal the main process that the page is done
+        try:
+            event_queue.put_nowait(
+                {
+                    "type": "page_done",
+                    "file": basename,
+                    "file_path": file_path,
+                    "page": page_num_1,
+                    "total_pages": total_pages,
+                    "method": method,
+                    "pid": pid,
+                    "seconds": round(duration, 3),
+                }
+            )
+        except Exception:
+            pass
+
     return page_number, text, method, meta
 
 
-def process_file(file_path, input_dir_root, output_dir_root="extracted_files"):
+def process_file(
+    file_path, input_dir_root, output_dir_root="extracted_files", event_queue=None
+):
     """Main entry point for processing a single PDF file."""
     start_time = time.time()
 
@@ -137,6 +192,10 @@ def process_file(file_path, input_dir_root, output_dir_root="extracted_files"):
 
         with pymupdf.open(file_path) as doc:
             num_pages = doc.page_count
+
+        basename = os.path.basename(file_path)
+        pid = os.getpid()
+        print(f"\n  [W{pid}] START {basename}  ({num_pages} pages)")
 
         results = [None] * num_pages
 
@@ -148,7 +207,8 @@ def process_file(file_path, input_dir_root, output_dir_root="extracted_files"):
         ):
             with ThreadPoolExecutor(max_workers=PAGE_LEVEL_OCR_MAX_WORKERS) as pool:
                 futures = [
-                    pool.submit(process_page, file_path, i) for i in range(num_pages)
+                    pool.submit(process_page, file_path, i, num_pages, event_queue)
+                    for i in range(num_pages)
                 ]
                 for future in as_completed(futures):
                     p_num, txt, method, meta = future.result()
@@ -156,7 +216,9 @@ def process_file(file_path, input_dir_root, output_dir_root="extracted_files"):
         else:
             # Sequential processing
             for i in range(num_pages):
-                p_num, txt, method, meta = process_page(file_path, i)
+                p_num, txt, method, meta = process_page(
+                    file_path, i, num_pages, event_queue
+                )
                 results[i] = (txt, method, meta)
 
         # Aggregate results
@@ -201,6 +263,22 @@ def process_file(file_path, input_dir_root, output_dir_root="extracted_files"):
 
         elapsed = time.time() - start_time
         char_count = len(final_text)
+
+        # Persist extraction record in DB (content stays on disk)
+        try:
+            import database
+
+            database.save_extracted_text(
+                source_path=file_path,
+                filename=os.path.basename(file_path),
+                rel_path=rel_path,  # e.g. "subfolder/file.pdf"
+                txt_path=out_txt_path,  # absolute path to the .txt
+                method=subfolder,  # 'ocr' | 'direct'
+                char_count=char_count,
+                page_count=num_pages,
+            )
+        except Exception as _db_err:
+            print(f"  [DB] Warning: could not save extraction record: {_db_err}")
 
         message = f"Pages: {num_pages} (OCR: {ocr_count}, Direct: {direct_count})"
 
