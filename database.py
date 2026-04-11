@@ -24,7 +24,8 @@ def _connect(db_path=None) -> sqlite3.Connection:
 def init_db(db_path=None):
     """Create tables if they don't exist."""
     conn = _connect(db_path)
-    conn.executescript("""
+    conn.executescript(
+        """
         CREATE TABLE IF NOT EXISTS files (
             path           TEXT PRIMARY KEY,
             status         TEXT,
@@ -45,7 +46,8 @@ def init_db(db_path=None):
         );
 
         CREATE INDEX IF NOT EXISTS idx_et_filename ON extracted_texts(filename);
-    """)
+    """
+    )
     conn.commit()
     conn.close()
 
@@ -154,6 +156,47 @@ def save_extracted_text(
     conn.close()
 
 
+def get_extracted_texts(limit: int = 500, offset: int = 0, db_path=None):
+    """Return list of records (no content — content read from disk on demand)."""
+    conn = _connect(db_path)
+    rows = conn.execute(
+        """
+        SELECT id, source_path, filename, rel_path, txt_path,
+               method, char_count, page_count, processed_at
+        FROM extracted_texts
+        ORDER BY processed_at DESC
+        LIMIT ? OFFSET ?
+    """,
+        (limit, offset),
+    ).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def get_extracted_text_by_id(record_id: int, db_path=None):
+    """Return a single record by id. Caller reads txt_path from disk."""
+    conn = _connect(db_path)
+    row = conn.execute(
+        "SELECT * FROM extracted_texts WHERE id=?", (record_id,)
+    ).fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+
+def get_extracted_by_filename(filename: str, db_path=None):
+    """Return the latest record for a filename, or None."""
+    conn = _connect(db_path)
+    row = conn.execute(
+        """
+        SELECT id, filename, rel_path, method, char_count, page_count, processed_at
+        FROM extracted_texts WHERE filename=?
+    """,
+        (filename,),
+    ).fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+
 def get_processed_filenames(db_path=None):
     """Set of filenames present in extracted_texts (cross-run deduplication)."""
     conn = _connect(db_path)
@@ -162,8 +205,8 @@ def get_processed_filenames(db_path=None):
     return {r[0] for r in rows}
 
 
-def reset_db(db_path=DB_NAME):
-    """Clear all data from the database."""
-    if os.path.exists(db_path):
-        os.remove(db_path)
-    init_db(db_path)
+def delete_extracted_text(record_id: int, db_path=None):
+    conn = _connect(db_path)
+    conn.execute("DELETE FROM extracted_texts WHERE id=?", (record_id,))
+    conn.commit()
+    conn.close()

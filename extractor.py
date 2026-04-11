@@ -10,7 +10,7 @@ from functools import partial
 from pathlib import Path
 from typing import Optional
 
-from config import WORKERS, JOB_TIMEOUT_SECONDS, LOG_DIR
+from config import WORKERS, JOB_TIMEOUT_SECONDS, LOG_DIR, LOG_MAX_FILES
 from worker import process_file
 import database
 
@@ -18,6 +18,7 @@ logger = logging.getLogger(__name__)
 
 # Shared queue for events from worker processes to the main process
 _WORKER_QUEUE: Optional[multiprocessing.Queue] = None
+
 
 # Pool initializer for shared event queue (set once per worker process)
 # Stores the shared queue in a module-level global so _tracked_process_file can access it
@@ -28,8 +29,8 @@ def _pool_init(q):
 
 
 def _tracked_process_file(file_path: str, input_dir: str, output_dir: str):
-    """Module level picklable wrapper around process_file(). 
-    
+    """Module level picklable wrapper around process_file().
+
     This function is called by the worker processes to process a file. It emits a 'file_started' event before delegating to the real process_file().
     """
     if _WORKER_QUEUE is not None:
@@ -64,25 +65,65 @@ def _configure_logging(log_dir: str) -> str:
         force=True,
     )
 
+    # Prune oldest logs beyond retention limit
+    logs = sorted(Path(log_dir).glob("pipeline_*.log"))
+    while len(logs) > LOG_MAX_FILES:
+        try:
+            logs.pop(0).unlink()
+        except Exception:
+            pass
+    return log_path
+
+
+def _emit_done(cb, done, total, direct, ocr, failed, timeouts):
+    if cb:
+        cb(
+            {
+                "type": "done",
+                "done": done,
+                "total": total,
+                "direct": direct,
+                "ocr": ocr,
+                "failed": failed,
+                "timeouts": timeouts,
+            }
+        )
+
+
 def run_pipeline(
     input_dir: str,
     output_dir: str = "extracted_files",
     batch_size: int = 10,
     force: bool = False,
+    progress_callback=None,
+    cancel_event=None,
     log_dir: str = None,
 ):
+    """Runs the entire PDF processing pipeline.
+
+    Emits the following event types via progress_callback:
+      log          - plain log line
+      file_started - worker picked up a file  { file, file_path, pid }
+      page_done    - page finished            { file, page, total_pages, method, pid }
+      file_done    - file completed OK        { file, file_path, status, elapsed, … }
+      file_failed  - file completed with error
+      file_timeout - file timed out
+      done         - all files finished       { done, total, direct, ocr, failed }
+    """
     log_dir = log_dir or LOG_DIR
     _configure_logging(log_dir)
 
     def _log(msg: str):
         logger.info(msg)
+        if progress_callback:
+            progress_callback({"type": "log", "message": f"[INFO] {msg}"})
+
     _log(f"Pipeline started: input={input_dir!r} output={output_dir!r} force={force}")
     print(f"--------- Starting PDF Extraction Pipeline ---------")
     print(f"Using {WORKERS} worker processes (Pool, maxtasksperchild=1)")
     print(f"Job timeout set to {JOB_TIMEOUT_SECONDS} seconds.")
     print(f"Output Directory: {output_dir}")
 
-    # Initialize Database
     database.init_db()
 
     # Skip filenames already present in extracted_texts
@@ -103,7 +144,8 @@ def run_pipeline(
     ]
 
     if not all_files:
-        print(f"No PDF files found in directory : {input_dir}")
+        print(f"No PDF files found in directory: {input_dir}")
+        _emit_done(progress_callback, 0, 0, 0, 0, 0, 0)
         return
 
     files_to_process = [
@@ -120,6 +162,7 @@ def run_pipeline(
 
     if not files_to_process:
         print("Nothing new to process.")
+        _emit_done(progress_callback, 0, 0, 0, 0, 0, 0)
         return
 
     # Smallest files first to keep all workers busy at the end of the batch
@@ -136,6 +179,8 @@ def run_pipeline(
     # Using a Manager-managed queue allows the queue to be shared between processes
     manager = multiprocessing.Manager()
     event_q = manager.Queue()
+
+    # Consumer thread: drains the queue and forwards events to the callback
     # This allows the main thread to continue processing files while the consumer thread
     # handles the events from the workers
     _stop_consumer = threading.Event()
@@ -149,6 +194,8 @@ def run_pipeline(
                 ev = event_q.get(timeout=0.3)
                 if ev.get("type") == "ocr_engine_missing":
                     ocr_engine_missing_flag.set()
+                if progress_callback:
+                    progress_callback(ev)
             except Exception:
                 pass
 
@@ -179,12 +226,17 @@ def run_pipeline(
             # chunksize=1 is used to process one file at a time
             for result in pool.imap_unordered(task_fn, files_to_process, chunksize=1):
 
-                # ocr_engine_missing is checked here in the main thread but was set by a worker process 
+                # ocr_engine_missing is checked here in the main thread but was set by a worker process
                 # worker process -> main process consumer thread -> threading.Event (the full cross-process signal chain)
                 if ocr_engine_missing_flag.is_set():
                     _log(
                         "OCR engine or library is missing. Terminating pipeline as requested."
                     )
+                    pool.terminate()
+                    break
+
+                if cancel_event is not None and cancel_event.is_set():
+                    _log("Pipeline cancelled by user.")
                     pool.terminate()
                     break
 
@@ -237,6 +289,22 @@ def run_pipeline(
                     }
                 )
 
+                if progress_callback:
+                    progress_callback(
+                        {
+                            "type": event_type,
+                            "file": basename,
+                            "file_path": file_path,
+                            "status": event_status,
+                            "elapsed": round(elapsed, 3) if elapsed else 0,
+                            "done": done_count,
+                            "total": total,
+                            "progress_pct": progress_pct,
+                            "method": method,
+                            "message": message,
+                            "char_count": char_count if char_count != "" else 0,
+                        }
+                    )
     finally:
         # Always shut down consumer thread cleanly
         _stop_consumer.set()
@@ -254,6 +322,16 @@ def run_pipeline(
     _log(
         f"Pipeline finished. Direct: {direct_success}, OCR: {ocr_success}, "
         f"Failed: {failures}, Timeouts: {timeouts}"
+    )
+
+    _emit_done(
+        progress_callback,
+        done_count,
+        total,
+        direct_success,
+        ocr_success,
+        failures,
+        timeouts,
     )
 
     # Persist per-run summary

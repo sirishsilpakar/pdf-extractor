@@ -2,5 +2,11 @@ packaging==26.0
 pillow==12.2.0
 PyMuPDF==1.27.2.2
 pytesseract==0.3.13
-tqdm==4.67.3
-watchdog==6.0.0
+Pillow<11.0.0
+pdfminer.six>=20221105
+pdfplumber>=0.11.4
+PyPDF2>=3.0.1
+marker-pdf>=0.6.0
+fastapi>=0.110.0
+uvicorn[standard]>=0.29.0
+python-multipart>=0.0.9
