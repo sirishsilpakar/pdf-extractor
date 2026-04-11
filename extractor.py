@@ -23,8 +23,14 @@ logging.basicConfig(
 def run_pipeline(
     input_dir: str,
     output_dir: str = "extracted_files",
-    batch_size: int = 10,
     force: bool = False,
+    remove_header: bool = False,
+    remove_footer: bool = False,
+    remove_page_number: bool = False,
+    remove_numerics: bool = False,
+    lemma: bool = False,
+    job_id: str = "",
+    progress_callback=None
 ):
     """Runs the entire PDF processing pipeline"""
     print(f"--------- Starting PDF Extraction Pipeline ---------")
@@ -73,7 +79,7 @@ def run_pipeline(
 
     if not files_to_process:
         print("No new files to process.")
-        return
+        raise Exception("No new files to process.")
 
     direct_extraction_success, ocr_extraction_success, failures, timeouts = 0, 0, 0, 0
 
@@ -87,17 +93,20 @@ def run_pipeline(
     with ProcessPoolExecutor(max_workers=WORKERS) as executor:
         # Mark files as STARTED and submit
         future_to_file = {}
+        total = len(files_to_process)
         for f in files_to_process:
             database.mark_started(f)  # Start tracking
             future = executor.submit(task_function, f)
             future_to_file[future] = f
-
-        for future in tqdm(
+        pbar = tqdm(
             as_completed(future_to_file),
             total=len(files_to_process),
             desc="Processing pdf files",
-        ):
+            mininterval=0.0001,
+        )
+        for index, future in enumerate(pbar):
             file_path = future_to_file[future]
+            pbar.set_description(f'Processing {file_path.rsplit('/', 1)[1]}')
             try:
                 result = future.result(timeout=JOB_TIMEOUT_SECONDS)
                 if isinstance(result, tuple) and len(result) == 5:
@@ -146,6 +155,27 @@ def run_pipeline(
                         "message": message,
                     }
                 )
+                if progress_callback:
+                  progress_callback({
+                    "current": index + 1,
+                    "total": total,
+                    "file_path": os.path.basename(file_path),
+                    "status": status,          # SUCCESS_DIRECT, SUCCESS_OCR, FAILURE, TIMEOUT
+                    "method": method,          # "direct", "ocr", "error"
+                    "elapsed": round(elapsed, 3) if elapsed is not None else None,
+                    "chars": char_count if char_count != "" else None,
+                    "message": message,
+                    "size": os.path.getsize(file_path),
+                  })
+                  param = {
+                    "batch_id": job_id,
+                    "file_name": os.path.basename(file_path), 
+                    "method": method, 
+                    "status": "completed", 
+                    "size": os.path.getsize(file_path),
+                    "error": ""
+                  }
+                  database.insert_file_log(**param)
 
             except TimeoutError:
                 failures += 1
@@ -156,6 +186,22 @@ def run_pipeline(
                     f"\nTIMEOUT ERROR: {os.path.basename(file_path)} took longer than {JOB_TIMEOUT_SECONDS}s and was skipped."
                 )
                 logging.error(f"TIMEOUT: {file_path}")
+                if progress_callback:
+                  progress_callback({
+                      "current": index + 1, "total": total,
+                      "file_path": os.path.basename(file_path),
+                      "status": "TIMEOUT", "method": "error",
+                      "elapsed": None, "chars": None, "message": msg,
+                  })
+                  param = {
+                    "batch_id": job_id,
+                    "file_name": os.path.basename(file_path), 
+                    "method": method, 
+                    "status": "failed", 
+                    "size": os.path.getsize(file_path), 
+                    "error": "Timeout error"
+                  }
+                  database.insert_file_log(**param)
 
             except Exception as e:
                 failures += 1
@@ -165,6 +211,22 @@ def run_pipeline(
                     f"\nERROR: An unexpected error occurred for {os.path.basename(file_path)}: {e}"
                 )
                 logging.error(f"EXCEPTION: {file_path} - {e}")
+                if progress_callback:
+                  progress_callback({
+                      "current": index + 1, "total": total,
+                      "file_path": os.path.basename(file_path),
+                      "status": "EXCEPTION", "method": "error",
+                      "elapsed": None, "chars": None, "message": str(e),
+                  })
+                  param = {
+                    "batch_id": job_id,
+                    "file_name": os.path.basename(file_path), 
+                    "method": method, 
+                    "status": "failed", 
+                    "size": os.path.getsize(file_path), 
+                    "error": str(e)
+                  }
+                  database.insert_file_log(**param)
 
     print("\n--------- Pipeline Complete ---------")
     print(f"Successfully processed (Direct): {direct_extraction_success}")

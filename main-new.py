@@ -1,49 +1,24 @@
-import os
-import pymupdf
-import logging
-from typing import Optional, List
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel, Field
-import asyncio
+# In your main.py
 import threading
 import json
-from fastapi.responses import StreamingResponse
+import os
+import pymupdf
 from operator import itemgetter
+from fastapi import FastAPI, HTTPException
+from fastapi.responses import StreamingResponse
+from pydantic import BaseModel
+from typing import Optional
 from job_runner import Job, _job_queue, _jobs, BUFFER_SIZE
+import job_runner
 import uuid
-from datetime import datetime
-from contextlib import asynccontextmanager
+import asyncio
+import logging
 
-# Import your custom modules
-from extractor import run_pipeline
-from config import OMP_THREAD_LIMIT
-import database
+app = FastAPI()
 
-# 1. Initialize the FastAPI App
-app = FastAPI(
-    title="PDF Extraction API",
-    description="API for processing and extracting text/OCR from directories of PDFs."
-)
-
-# ── Start the consumer once on app startup ──────────────────────────────────
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    asyncio.create_task(_job_consumer())
-    yield
-
-app = FastAPI(lifespan=lifespan)
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],  # Allows requests from any origin (e.g., your React app)
-    allow_credentials=True,
-    allow_methods=["*"],  # Allows all methods, including OPTIONS and POST
-    allow_headers=["*"],  # Allows all headers, including Content-Type
-)
 class ExtractionRequest(BaseModel):
     input_directory: str
-    output_dir: str = "extracted_files"   #hardcoded
+    output_dir: str = "extracted_files"
     force: bool = False
     no_ocr: bool = False
     fast: bool = False
@@ -55,14 +30,6 @@ class ExtractionRequest(BaseModel):
     removeNumerics: bool = False
     lemma: bool = False
 
-class Logs(BaseModel):
-    id: int
-    timestamp: str
-    message: str
-    type: str
-
-class LogRequest():
-    logs: List[Logs]
 
 # ── Helper: publish an event to a job's queue + buffer ──────────────────────
 async def _publish(job: Job, payload: dict):
@@ -85,7 +52,7 @@ async def _job_consumer():
         loop = asyncio.get_running_loop()
 
         job.status = "running"
-        job.started_at = datetime.now().isoformat()
+        job.started_at = datetime.utcnow().isoformat()
         await _publish(job, {"status": "started", "job_id": job.job_id})
 
         # Build progress callback that bridges sync thread → async queue
@@ -108,7 +75,6 @@ async def _job_consumer():
                     remove_page_number=job.options["removePageNumber"],
                     remove_numerics=job.options["removeNumerics"],
                     lemma=job.options["lemma"],
-                    job_id=job.job_id,
                     progress_callback=progress_callback,
                 )
                 asyncio.run_coroutine_threadsafe(
@@ -132,7 +98,7 @@ async def _job_consumer():
         await done_event.wait()
 
         job.status = "completed" if job.error is None else "failed"
-        job.finished_at = datetime.now().isoformat()
+        job.finished_at = datetime.utcnow().isoformat()
         _job_queue.task_done()
 
 
@@ -158,12 +124,19 @@ def _apply_env(options: dict):
 
     pymupdf.TOOLS.mupdf_display_errors(False)
 
+
+# ── Start the consumer once on app startup ──────────────────────────────────
+@app.on_event("startup")
+async def startup():
+    asyncio.create_task(_job_consumer())
+
+
 # ── POST /extract  (layer 2 + 3) ─────────────────────────────────────────────
 @app.post("/extract")
 async def submit_job(request: ExtractionRequest):
     """
     Accepts a job, adds it to the FIFO queue, returns job_id immediately.
-    Does NOT start streaming here, frontend uses job_id to subscribe via SSE.
+    Does NOT start streaming here — frontend uses job_id to subscribe via SSE.
     """
     if not os.path.isdir(request.input_directory):
         raise HTTPException(status_code=400, detail="Directory not found.")
@@ -186,102 +159,3 @@ async def submit_job(request: ExtractionRequest):
         "queue_position": queue_position,
         "submitted_at": job.submitted_at,
     }
-
-# GET /extract/stream/{job_id}  — SSE stream with reconnect replay (layer 5)
-@app.get("/extract/stream/{job_id}")
-async def stream_job(job_id: str, last_event_id: Optional[int] = None):
-    """
-    Subscribes to a job's SSE stream.
-    If last_event_id is provided (reconnect), replays buffered events from that index.
-    """
-    job = _jobs.get(job_id)
-    if not job:
-        raise HTTPException(status_code=404, detail="Job not found.")
-
-    async def event_generator():
-        # ── Replay buffer on reconnect (layer 5) ──────────────────────────
-        replay_from = (last_event_id + 1) if last_event_id is not None else 0
-        for idx, buffered_event in enumerate(job.event_buffer[replay_from:], start=replay_from):
-            yield f"id: {idx}\ndata: {json.dumps(buffered_event)}\n\n"
-
-        # If job already finished before subscriber connected, we're done
-        if job.status in ("completed", "failed"):
-            return
-
-        # ── Live events ───────────────────────────────────────────────────
-        event_index = len(job.event_buffer)  # continue IDs from where buffer left off
-        while True:
-            try:
-                data = await asyncio.wait_for(job.event_queue.get(), timeout=30.0)
-                yield f"id: {event_index}\ndata: {json.dumps(data)}\n\n"
-                event_index += 1
-
-                if data["status"] in ("completed", "error"):
-                    break
-            except asyncio.TimeoutError:
-                # Keepalive ping so the connection doesn't drop
-                yield ": keepalive\n\n"
-
-    return StreamingResponse(
-        event_generator(),
-        media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "X-Accel-Buffering": "no",   # important if behind nginx
-            "Connection": "keep-alive",
-        },
-    )
-
-
-# GET /extract/status/{job_id}  — snapshot for page load / polling fallback
-@app.get("/extract/status/{job_id}")
-async def job_status(job_id: str):
-    """
-    Returns current job state without streaming.
-    Frontend calls this on mount to check if a job is already running.
-    """
-    job = _jobs.get(job_id)
-    if not job:
-        raise HTTPException(status_code=404, detail="Job not found.")
-
-    return {
-        "job_id": job.job_id,
-        "status": job.status,
-        "submitted_at": job.submitted_at,
-        "started_at": job.started_at,
-        "finished_at": job.finished_at,
-        "queue_position": list(_jobs.keys()).index(job_id) if job.status == "queued" else None,
-        "error": job.error,
-    }
-
-@app.get("/files")
-async def file_list():
-    """
-    Returns the list of file previously processed
-    """
-    files = database.get_logged_files()
-    return files
-
-# @app.post("/logs")
-# async def log(request: LogRequest):
-#     """
-#     Saves the logs
-#     """
-#     for file in request.logs:
-#       # param = {
-#       #   "id": file.id,
-#       #   "timestamp": file.timestamp,
-#       #   "message": file.message ,
-#       #   "type": file.type,
-#       # }
-#       database.insert_activity_log(file)
-    
-#     return { "message" : "Insert successfully"}
-
-# @app.get("/logs")
-# async def file_list():
-#     """
-#     Returns the list of file previously processed
-#     """
-#     files = database.get_logs()
-#     return files
