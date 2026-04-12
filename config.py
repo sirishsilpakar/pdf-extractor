@@ -83,3 +83,10 @@ LOG_DIR = os.path.abspath(
 
 # Maximum number of pipeline_*.log files to keep (oldest are deleted)
 LOG_MAX_FILES = int(os.getenv("EXTRACTOR_LOG_MAX_FILES", "100"))
+# Bytes sampled for SHA-256 content fingerprinting: first 32 KB + last 32 KB = 64 KB total
+HASH_SAMPLE_BYTES: int = 64 * 1024
+# Estimated peak RAM consumption per worker process (in MB).  
+# Includes the in-memory OCR image buffer (200 DPI page render of a 50 MB PDF ~ 200–400 MB) plus Python interpreter overhead
+# Reduce this if workers get OOM error or increase 
+# if your machine has plenty of RAM and you want more parallelism
+RAM_PER_WORKER_MB: int = int(os.getenv("RAM_PER_WORKER_MB", "800"))
