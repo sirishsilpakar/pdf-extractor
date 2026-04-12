@@ -27,9 +27,9 @@ dependencies = [
 pdf-extractor-full = "main:main"
 pdf-extractor-ui   = "server:start"
 
-[tool.setuptools]
-py-modules = ["main", "extractor", "worker", "config", "database", "server"]
-py-packages = ["api"]
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["core*", "services*", "db*", "api*", "cli*"]
 
 [tool.setuptools.package-data]
 "*" = ["ui/*"]

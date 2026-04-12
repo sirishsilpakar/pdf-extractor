@@ -1,5 +1,6 @@
 import multiprocessing
 import os
+from pathlib import Path
 
 # Controls the number of parallel processes.
 # A good starting point is half your CPU cores to avoid memory exhaustion,
@@ -83,10 +84,30 @@ LOG_DIR = os.path.abspath(
 
 # Maximum number of pipeline_*.log files to keep (oldest are deleted)
 LOG_MAX_FILES = int(os.getenv("EXTRACTOR_LOG_MAX_FILES", "100"))
+
+# Chunk size for streaming file uploads to disk
+UPLOAD_CHUNK_SIZE: int = int(
+    os.getenv("UPLOAD_CHUNK_SIZE", str(1 * 1024 * 1024))
+)  # 1 MB
+
+# Default page size for paginated API responses
+PAGE_SIZE: int = int(os.getenv("PAGE_SIZE", "50"))
+MAX_PAGE_SIZE: int = int(os.getenv("MAX_PAGE_SIZE", "200"))
+
 # Bytes sampled for SHA-256 content fingerprinting: first 32 KB + last 32 KB = 64 KB total
 HASH_SAMPLE_BYTES: int = 64 * 1024
-# Estimated peak RAM consumption per worker process (in MB).  
+
+# Default Directories
+UPLOAD_DIR: Path = Path(os.getenv("UPLOAD_DIR", os.path.join(_CURRENT_PATH, "uploads")))
+OUTPUT_DIR: str = os.getenv(
+    "OUTPUT_DIR", os.path.join(_CURRENT_PATH, "extracted_files")
+)
+
+UPLOAD_DIR.mkdir(exist_ok=True)
+os.makedirs(OUTPUT_DIR, exist_ok=True)
+
+# Estimated peak RAM consumption per worker process (in MB).
 # Includes the in-memory OCR image buffer (200 DPI page render of a 50 MB PDF ~ 200–400 MB) plus Python interpreter overhead
-# Reduce this if workers get OOM error or increase 
+# Reduce this if workers get OOM error or increase
 # if your machine has plenty of RAM and you want more parallelism
 RAM_PER_WORKER_MB: int = int(os.getenv("RAM_PER_WORKER_MB", "800"))
