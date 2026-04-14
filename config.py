@@ -6,7 +6,12 @@ from pathlib import Path
 # A good starting point is half your CPU cores to avoid memory exhaustion,
 # especially with OCR. Adjust this based on system RAM and performance.
 # e.g. For an 8-core machine, start with 4.
-WORKERS = max(1, multiprocessing.cpu_count() // 2)
+_workers_override = os.getenv("WORKERS_OVERRIDE")
+WORKERS = (
+    int(_workers_override)
+    if _workers_override
+    else max(1, multiprocessing.cpu_count() // 2)
+)
 
 # The maximum time in seconds a single PDF is allowed to take.
 # If a file processing takes longer, the job is cancelled and marked as a failure.

@@ -7,8 +7,8 @@ name = "pdf-extractor"
 version = "2.0.0"
 description = "A PDF extraction tool with OCR support, reliability features, and a web-based dashboard UI."
 authors = [
-    {name = "Sanjay Gurung", email = "gurung@students.uni-marburg.de"},
-    {name = "Sapna Luthra", email = "luthra@students.uni-marburg.de"},
+    {name = "Sanjay Gurung",   email = "gurung@students.uni-marburg.de"},
+    {name = "Sapna Luthra",    email = "luthra@students.uni-marburg.de"},
     {name = "Sirish Silpakar", email = "silpakar@students.uni-marburg.de"},
 ]
 readme = "README.md"
@@ -21,10 +21,17 @@ dependencies = [
     "fastapi>=0.110.0",
     "uvicorn[standard]>=0.29.0",
     "python-multipart>=0.0.9",
+    "click>=8.1.0",
+    "tqdm>=4.67.1",
 ]
 
 [project.scripts]
-pdf-extractor-full = "main:main"
+# Primary entry points
+pdf-extract    = "cli.main:cli"         # Multi-command click CLI
+pdf-extract-ui = "server:start"         # Uvicorn server
+
+# Backward-compatibility aliases
+pdf-extractor-full = "cli.main:cli"
 pdf-extractor-ui   = "server:start"
 
 [tool.setuptools.packages.find]
