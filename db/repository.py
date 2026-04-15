@@ -128,7 +128,6 @@ def _detect_legacy_version(conn: sqlite3.Connection) -> int:
         return 0
 
     files_cols = {row[1] for row in conn.execute("PRAGMA table_info(files)")}
-    texts_cols = {row[1] for row in conn.execute("PRAGMA table_info(extracted_texts)")}
 
     if "fts_pages" in tables:
         return 5  # Already at v5 (shouldn't reach here but be safe)

@@ -19,7 +19,6 @@ from __future__ import annotations
 
 import os
 import sys
-from pathlib import Path
 
 import click
 
@@ -97,9 +96,9 @@ def run_cmd(input_dir, output_dir, workers, force, no_ocr, fast, dpi, db_path, q
     os.environ.setdefault("OMP_NUM_THREADS", str(OMP_THREAD_LIMIT))
 
     # Imports after env setup (config.py reads env at import time)
+    import services  # noqa: F401 _> registers OCR engines
     from core.pipeline import run_pipeline
     from db.repository import DatabaseRepository
-    import services  # noqa: F401 _> registers OCR engines
 
     db = DatabaseRepository(db_path or DB_PATH)
     db.init_schema()

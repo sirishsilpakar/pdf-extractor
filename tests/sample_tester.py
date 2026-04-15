@@ -1,8 +1,8 @@
 import argparse
-import sqlite3
-from typing import List, Dict, Any
-import sys
 import os
+import sqlite3
+import sys
+from typing import Any, Dict, List
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 from config import DB_PATH

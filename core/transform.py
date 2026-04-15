@@ -8,7 +8,6 @@ backward-compatibility moduel
 import os
 import re
 import time
-from pathlib import Path
 
 RE_HYPHEN = re.compile(r"-\n")
 RE_WHITESP = re.compile(r"\s+")

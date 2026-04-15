@@ -5,9 +5,9 @@ Two tables:
   extracted_texts — index of completed extractions; content lives on disk as .txt
 """
 
-import sqlite3
 import datetime
 import os
+import sqlite3
 
 from config import DB_PATH as _DEFAULT_DB
 

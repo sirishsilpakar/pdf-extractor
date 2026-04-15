@@ -15,11 +15,7 @@ from typing import List
 from fastapi import APIRouter, File, HTTPException, UploadFile
 
 from api.v1.deps import DBDep
-from api.v1.schemas import (
-    CheckHashesRequest,
-    CheckHashesResponse,
-    UploadedFileSchema,
-)
+from api.v1.schemas import CheckHashesRequest, CheckHashesResponse, UploadedFileSchema
 from config import UPLOAD_CHUNK_SIZE, UPLOAD_DIR
 from services.hasher import HASH_SAMPLE_BYTES
 
@@ -93,7 +89,6 @@ async def upload_pdfs(
         # Preserve relative sub-path for folder uploads (browser sends "subdir/file.pdf")
         safe_rel = Path(upload.filename).as_posix().lstrip("/").lstrip("../")
         dest = UPLOAD_DIR / file_id / safe_rel
-        size_before = 0
 
         content_hash = await _stream_to_disk(upload, dest)
         size_bytes = dest.stat().st_size

@@ -32,7 +32,6 @@ import logging
 import multiprocessing
 import os
 import threading
-import time
 from dataclasses import asdict
 from datetime import datetime
 from pathlib import Path
@@ -42,15 +41,14 @@ from config import (
     JOB_TIMEOUT_SECONDS,
     LOG_DIR,
     LOG_MAX_FILES,
-    WORKERS,
     RAM_PER_WORKER_MB,
+    WORKERS,
 )
 from core.events import (
     EventCallback,
-    FileResult,
-    FileStatus,
     FileDoneEvent,
     FileFailedEvent,
+    FileResult,
     FileTimeoutEvent,
     LogEvent,
     PipelineDoneEvent,
@@ -230,7 +228,6 @@ def run_pipeline(
     files_to_process.sort(key=lambda p: os.path.getsize(p))
 
     # Create run record before work begins
-    import json as _json
 
     db.create_run(
         run_id=run_id,

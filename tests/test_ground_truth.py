@@ -1,9 +1,10 @@
 """Test script to validate ground truth extraction"""
 
-import os
-import json
 import difflib
+import json
+import os
 import sqlite3
+
 from config import DB_PATH
 
 

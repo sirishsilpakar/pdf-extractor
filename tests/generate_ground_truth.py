@@ -1,11 +1,12 @@
 """Script to generate test PDFs for the extraction pipeline"""
 
-import os
 import json
-from reportlab.pdfgen import canvas
+import os
+
+from PIL import Image, ImageDraw
 from reportlab.lib.pagesizes import letter
 from reportlab.lib.units import inch
-from PIL import Image, ImageDraw
+from reportlab.pdfgen import canvas
 
 
 def generate():

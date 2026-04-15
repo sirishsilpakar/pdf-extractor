@@ -80,6 +80,7 @@ def create_app() -> FastAPI:
 async def _sse_endpoint(request: Request):
     """Long-lived SSE stream.  One queue per connected client."""
     import asyncio
+
     from api import job_manager as _jm
     from api import sse
 

@@ -5,15 +5,18 @@ Paginated listing of '.txt' output files on disk, and deletion
 
 from __future__ import annotations
 
-import math
 import os
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from fastapi import APIRouter, HTTPException, Query
 
-from api.v1.schemas import ExtractedFileRecord, PagedResponse
 from api.v1.deps import DBDep
+from api.v1.schemas import ExtractedFileRecord, PagedResponse
 from config import OUTPUT_DIR
+
+if TYPE_CHECKING:
+    from db.repository import DatabaseRepository
 
 router = APIRouter()
 

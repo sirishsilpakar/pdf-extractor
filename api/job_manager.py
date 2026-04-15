@@ -11,7 +11,6 @@
 
 from __future__ import annotations
 
-import math
 import os
 import threading
 import time
@@ -19,11 +18,7 @@ from collections import deque
 from dataclasses import dataclass, field
 from typing import Callable, Deque, Optional
 
-from core.events import (
-    ExtractionMethod,
-    FileStatus,
-    JobStatus,
-)
+from core.events import ExtractionMethod, FileStatus, JobStatus
 
 
 @dataclass
@@ -389,6 +384,7 @@ class JobManager:
     ) -> None:
         """Execute ``run_pipeline`` in a background daemon thread"""
         import logging as _logging
+
         from core.pipeline import run_pipeline
 
         try:

@@ -5,9 +5,9 @@ from pathlib import Path
 import pytest
 
 from services.hasher import (
+    HASH_SAMPLE_BYTES,
     HEAD_SAMPLE_BYTES,
     TAIL_SAMPLE_BYTES,
-    HASH_SAMPLE_BYTES,
     compute_bytes_hash,
     compute_file_hash,
 )

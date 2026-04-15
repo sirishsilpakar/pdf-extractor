@@ -48,6 +48,7 @@ def test_falls_back_gracefully_without_psutil():
     with patch.dict("sys.modules", {"psutil": None}):
         # We need to reimport to simulate ImportError properly
         import importlib
+
         import core.resources
 
         importlib.reload(core.resources)
