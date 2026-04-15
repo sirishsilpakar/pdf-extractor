@@ -1,0 +1,97 @@
+# ---------------------------------------------------------------------------
+# PDF TextExtract — GitLab CI/CD Pipeline
+#
+# Lint jobs (stage 1, run in parallel):
+#   lint:black  — format check
+#   lint:isort  — import order check
+#   lint:flake8 — style and bug check
+#
+# Test jobs (stage 2, run after all lint passes):
+#   test:unit   — core/, db/, services/
+#   test:api    — api/ integration tests
+#
+# Triggered on:
+#   - MR targeting `dev` or `main`
+#   - Direct push to `dev` or `main`
+# ---------------------------------------------------------------------------
+
+default:
+  image: python:3.11-slim
+
+  cache:
+    key: "$CI_COMMIT_REF_SLUG"
+    paths:
+      - .pip-cache/
+
+  before_script:
+    - pip install --cache-dir .pip-cache -e ".[dev]" -q
+
+# ---------------------------------------------------------------------------
+# Trigger rules
+# ---------------------------------------------------------------------------
+
+workflow:
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event" &&
+          ($CI_MERGE_REQUEST_TARGET_BRANCH_NAME == "dev" ||
+           $CI_MERGE_REQUEST_TARGET_BRANCH_NAME == "main")
+    - if: $CI_COMMIT_BRANCH == "dev" || $CI_COMMIT_BRANCH == "main" || $CI_COMMIT_BRANCH == "ci/gitlab-pipeline-and-linting"
+
+# ---------------------------------------------------------------------------
+# Stages
+# ---------------------------------------------------------------------------
+
+stages:
+  - lint
+  - test
+
+# ---------------------------------------------------------------------------
+# Lint — all three run in parallel; all must pass before tests start
+# ---------------------------------------------------------------------------
+
+lint:black:
+  stage: lint
+  script:
+    - echo "==> black --check"
+    - black --check --diff .
+  allow_failure: false
+
+lint:isort:
+  stage: lint
+  script:
+    - echo "==> isort --check"
+    - isort --check-only --diff --profile black .
+  allow_failure: false
+
+lint:flake8:
+  stage: lint
+  script:
+    - echo "==> flake8"
+    - flake8 .
+  allow_failure: false
+
+# ---------------------------------------------------------------------------
+# Tests — split by layer for clear failure attribution in MR view
+# ---------------------------------------------------------------------------
+
+test:unit:
+  stage: test
+  script:
+    - echo "==> pytest core/ db/ services/"
+    - pytest tests/core/ tests/db/ tests/services/ -v --tb=short --junit-xml=report-unit.xml
+  artifacts:
+    when: always
+    reports:
+      junit: report-unit.xml
+    expire_in: 7 days
+
+test:api:
+  stage: test
+  script:
+    - echo "==> pytest api/"
+    - pytest tests/api/ -v --tb=short --junit-xml=report-api.xml
+  artifacts:
+    when: always
+    reports:
+      junit: report-api.xml
+    expire_in: 7 days
