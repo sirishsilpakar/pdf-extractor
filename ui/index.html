@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>PDF TextExtract — Dashboard</title>
-  <meta name="description" content="Browser-based dashboard for the PDF TextExtract pipeline. Import PDFs, track extraction progress in real-time, and search extracted text." />
+  <meta name="description" content="Production dashboard for the PDF TextExtract pipeline. Import PDFs, track extraction progress in real-time, browse paginated results, and search extracted text." />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
@@ -35,6 +35,10 @@
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
         Search
       </a>
+      <a href="#" class="nav-item" id="nav-runs" data-view="runs">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+        Runs
+      </a>
       <a href="#" class="nav-item" id="nav-settings" data-view="settings">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.07 4.93l-1.41 1.41M4.93 4.93l1.41 1.41M19.07 19.07l-1.41-1.41M4.93 19.07l1.41-1.41M12 2v2M12 20v2M2 12h2M20 12h2"/></svg>
         Settings
@@ -49,7 +53,7 @@
     </div>
   </aside>
 
-  <!-- Main-->
+  <!-- Main -->
   <div class="main-wrap">
 
     <!-- Header -->
@@ -63,8 +67,8 @@
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/><line x1="12" y1="11" x2="12" y2="17"/><line x1="9" y1="14" x2="15" y2="14"/></svg>
           Import Folder
         </button>
-        <!-- hidden file inputs -->
-        <input type="file" id="input-files" accept=".pdf" multiple hidden />
+        <!-- Hidden inputs -->
+        <input type="file" id="input-files"  accept=".pdf" multiple hidden />
         <input type="file" id="input-folder" accept=".pdf" webkitdirectory multiple hidden />
       </div>
       <div class="search-wrap" id="search-bar-wrap">
@@ -79,7 +83,9 @@
     <!-- Views -->
     <div class="content-area">
 
-      <!-- Dashboard view -->
+      <!-- ============================================================
+           DASHBOARD VIEW
+           ============================================================ -->
       <section class="view active" id="view-dashboard">
         <div class="content-with-panel">
           <div class="content-main">
@@ -133,7 +139,7 @@
               </div>
             </div>
 
-            <!-- Drop-zone (visible when idle) -->
+            <!-- Drop-zone (visible when idle & no files) -->
             <div class="drop-zone" id="drop-zone">
               <div class="drop-icon">
                 <svg viewBox="0 0 64 64" fill="none" stroke="currentColor" stroke-width="2">
@@ -142,16 +148,18 @@
                 </svg>
               </div>
               <p class="drop-title">Drop PDFs here or use the import buttons above</p>
-              <p class="drop-hint">Supports single files and entire folders</p>
+              <p class="drop-hint">Supports single files and entire folder trees</p>
             </div>
 
-            <!-- File table -->
+            <!-- File table card (with integrated pagination) -->
             <div class="card" id="file-table-card" style="display:none">
               <div class="card-header">
                 <h2 id="file-table-title">Files</h2>
-                <button class="btn btn-primary btn-sm" id="btn-start" style="display:none">
-                  Start Extraction
-                </button>
+                <div style="display:flex;gap:0.5rem;align-items:center">
+                  <button class="btn btn-primary btn-sm" id="btn-start" style="display:none">
+                    Start Extraction
+                  </button>
+                </div>
               </div>
               <div class="table-wrap">
                 <table class="file-table" id="file-table">
@@ -167,6 +175,18 @@
                   </thead>
                   <tbody id="file-tbody"></tbody>
                 </table>
+              </div>
+              <!-- Pagination controls for active-job file list -->
+              <div class="pagination" id="job-files-pagination" style="display:none">
+                <button class="pg-btn" id="job-files-prev" aria-label="Previous page">‹</button>
+                <span class="pg-info" id="job-files-page-info">Page 1 of 1</span>
+                <button class="pg-btn" id="job-files-next" aria-label="Next page">›</button>
+                <span class="pg-size-label">Rows:</span>
+                <select class="pg-size-select" id="job-files-page-size">
+                  <option value="25">25</option>
+                  <option value="50" selected>50</option>
+                  <option value="100">100</option>
+                </select>
               </div>
             </div>
 
@@ -185,9 +205,9 @@
               <div class="log-body" id="log-body"></div>
             </div>
 
-          </div>
+          </div><!-- /content-main -->
 
-          <!-- Settings panel -->
+          <!-- Settings panel (right sidebar) -->
           <aside class="settings-panel">
             <h3>Processing Settings</h3>
 
@@ -201,7 +221,6 @@
                 <span class="slider"></span>
               </label>
             </div>
-
             <div class="setting-item">
               <div class="setting-info">
                 <span class="setting-name">Remove Footer</span>
@@ -212,7 +231,6 @@
                 <span class="slider"></span>
               </label>
             </div>
-
             <div class="setting-item">
               <div class="setting-info">
                 <span class="setting-name">Remove Page Numbers</span>
@@ -223,7 +241,6 @@
                 <span class="slider"></span>
               </label>
             </div>
-
             <div class="setting-item">
               <div class="setting-info">
                 <span class="setting-name">Remove Numeric Values</span>
@@ -234,7 +251,6 @@
                 <span class="slider"></span>
               </label>
             </div>
-
             <div class="setting-item">
               <div class="setting-info">
                 <span class="setting-name">Enable Lemmatization</span>
@@ -245,7 +261,6 @@
                 <span class="slider"></span>
               </label>
             </div>
-
             <div class="setting-item">
               <div class="setting-info">
                 <span class="setting-name">Apply to All Files</span>
@@ -267,17 +282,17 @@
                 Save Preset
               </button>
             </div>
-
             <div id="presets-list" class="presets-list"></div>
           </aside>
         </div>
       </section>
 
-      <!-- Results view -->
+      <!-- ============================================================
+           RESULTS VIEW  — paginated table + inline viewer
+           ============================================================ -->
       <section class="view" id="view-results">
         <div class="content-with-panel results-layout">
 
-          <!-- Tree panel -->
           <div class="content-main">
             <div class="card">
               <div class="card-header">
@@ -285,6 +300,18 @@
                 <button class="btn btn-outline btn-sm" id="btn-refresh-results">Refresh</button>
               </div>
               <div id="results-tree-wrap" class="results-tree-wrap"></div>
+              <!-- Results pagination -->
+              <div class="pagination" id="results-pagination">
+                <button class="pg-btn" id="results-prev" aria-label="Previous page">‹</button>
+                <span class="pg-info" id="results-page-info">Page 1 of 1</span>
+                <button class="pg-btn" id="results-next" aria-label="Next page">›</button>
+                <span class="pg-size-label">Rows:</span>
+                <select class="pg-size-select" id="results-page-size">
+                  <option value="25">25</option>
+                  <option value="50" selected>50</option>
+                  <option value="100">100</option>
+                </select>
+              </div>
             </div>
           </div>
 
@@ -303,7 +330,9 @@
         </div>
       </section>
 
-      <!-- Files view -->
+      <!-- ============================================================
+           FILES VIEW — paginated on-disk .txt listing
+           ============================================================ -->
       <section class="view" id="view-files">
         <div class="card">
           <div class="card-header">
@@ -315,7 +344,10 @@
               <thead>
                 <tr>
                   <th>File Name</th>
+                  <th>Path</th>
                   <th>Size</th>
+                  <th>Conf.</th>
+                  <th>Flags</th>
                   <th>Last Modified</th>
                   <th>Actions</th>
                 </tr>
@@ -323,22 +355,96 @@
               <tbody id="extracted-tbody"></tbody>
             </table>
           </div>
+          <!-- Files pagination -->
+          <div class="pagination" id="files-pagination">
+            <button class="pg-btn" id="files-prev" aria-label="Previous page">‹</button>
+            <span class="pg-info" id="files-page-info">Page 1 of 1</span>
+            <button class="pg-btn" id="files-next" aria-label="Next page">›</button>
+            <span class="pg-size-label">Rows:</span>
+            <select class="pg-size-select" id="files-page-size">
+              <option value="25">25</option>
+              <option value="50" selected>50</option>
+              <option value="100">100</option>
+            </select>
+          </div>
         </div>
       </section>
 
-      <!-- Search view -->
+      <!-- ============================================================
+           SEARCH VIEW — FTS5 paginated results
+           ============================================================ -->
       <section class="view" id="view-search">
         <div class="card">
           <div class="card-header"><h2>Search Extracted Text</h2></div>
+          <!-- reindex notice, shown when index is empty -->
+          <div id="search-reindex-notice" class="reindex-notice" style="display:none">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+            Search index is empty — previous extractions are not indexed yet.
+            <button class="btn btn-sm btn-outline" id="btn-reindex">Build Index</button>
+          </div>
           <div class="search-box-wrap">
             <input type="text" id="search-main" class="search-main-input" placeholder="Enter search term…" />
             <button class="btn btn-primary" id="btn-search">Search</button>
           </div>
           <div id="search-results" class="search-results"></div>
+          <!-- Search pagination -->
+          <div class="pagination" id="search-pagination" style="display:none">
+            <button class="pg-btn" id="search-prev" aria-label="Previous page">‹</button>
+            <span class="pg-info" id="search-page-info">Page 1 of 1</span>
+            <button class="pg-btn" id="search-next" aria-label="Next page">›</button>
+          </div>
         </div>
       </section>
 
-      <!-- Settings view -->
+      <!-- ============================================================
+           RUNS VIEW — pipeline run log with stats cards
+           ============================================================ -->
+      <section class="view" id="view-runs">
+        <div class="card">
+          <div class="card-header">
+            <h2>Pipeline Runs</h2>
+            <button class="btn btn-sm btn-outline" id="btn-refresh-runs" title="Refresh">↻ Refresh</button>
+          </div>
+          <div id="runs-list" class="runs-list"><!-- cards rendered by JS --></div>
+          <div class="pagination" id="runs-pagination" style="display:none">
+            <button class="pg-btn" id="runs-prev" aria-label="Previous page">‹</button>
+            <span class="pg-info" id="runs-page-info">Page 1 of 1</span>
+            <button class="pg-btn" id="runs-next" aria-label="Next page">›</button>
+          </div>
+        </div>
+        <!-- drill-down: files in a run -->
+        <div class="card" id="run-files-card" style="display:none;margin-top:1.25rem">
+          <div class="card-header">
+            <h2 id="run-files-title">Files in run</h2>
+            <button class="btn btn-sm btn-ghost" id="btn-close-run-files">✕ Close</button>
+          </div>
+          <div class="table-wrap">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>Filename</th>
+                  <th>Method</th>
+                  <th>Pages</th>
+                  <th>Characters</th>
+                  <th>Conf.</th>
+                  <th>Flags</th>
+                  <th>Processed</th>
+                </tr>
+              </thead>
+              <tbody id="run-files-tbody"></tbody>
+            </table>
+          </div>
+          <div class="pagination" id="run-files-pagination" style="display:none">
+            <button class="pg-btn" id="run-files-prev">‹</button>
+            <span class="pg-info" id="run-files-page-info">Page 1 of 1</span>
+            <button class="pg-btn" id="run-files-next">›</button>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============================================================
+           SETTINGS VIEW
+           ============================================================ -->
       <section class="view" id="view-settings">
         <div class="card">
           <div class="card-header"><h2>Application Settings</h2></div>
@@ -377,7 +483,7 @@
     </div><!-- /content-area -->
   </div><!-- /main-wrap -->
 
-  <!-- Reprocess confirmation modal -->
+  <!-- Hash-check / reprocess modal -->
   <div class="modal-overlay" id="reprocess-modal" style="display:none" role="dialog" aria-modal="true">
     <div class="modal">
       <h3>Files Already Processed</h3>
@@ -385,7 +491,7 @@
       <div class="modal-actions">
         <button class="btn btn-outline" id="modal-btn-skip">Process new files only</button>
         <button class="btn btn-primary" id="modal-btn-reprocess">Reprocess all</button>
-        <button class="btn btn-ghost" id="modal-btn-cancel">Cancel</button>
+        <button class="btn btn-ghost"   id="modal-btn-cancel">Cancel</button>
       </div>
     </div>
   </div>
