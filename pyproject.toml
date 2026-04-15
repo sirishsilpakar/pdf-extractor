@@ -1,0 +1,100 @@
+[build-system]
+requires = ["setuptools>=42", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pdf-extractor"
+version = "3.0.0"
+description = "Production ready PDF extraction pipeline with OCR, REST API, and CLI."
+authors = [
+    {name = "Sanjay Gurung",   email = "gurung@students.uni-marburg.de"},
+    {name = "Sapna Luthra",    email = "luthra@students.uni-marburg.de"},
+    {name = "Sirish Silpakar", email = "silpakar@students.uni-marburg.de"},
+]
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = [
+    "PyMuPDF>=1.26.3",
+    "Pillow",
+    "pytesseract",
+    "fastapi>=0.110.0",
+    "uvicorn[standard]>=0.29.0",
+    "python-multipart>=0.0.9",
+    "click>=8.1.0",
+    "tqdm>=4.67.1",
+]
+
+[project.scripts]
+# Primary entry points
+pdf-extract    = "cli.main:cli"         # Multi-command click CLI
+pdf-extract-ui = "server:start"         # Uvicorn server
+
+# Backward-compatibility aliases
+pdf-extractor-full = "cli.main:cli"
+pdf-extractor-ui   = "server:start"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["core*", "services*", "db*", "api*", "cli*"]
+
+[tool.setuptools.package-data]
+"*" = ["ui/*", "ui/**/*"]
+
+[project.optional-dependencies]
+dev = [
+    "pre-commit>=3.0.0",
+    "black>=24.0.0",
+    "isort>=5.13.0",
+    "flake8>=7.0.0",
+    "flake8-bugbear>=24.0.0",  # extra opinionated checks (B-codes)
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.23.0",
+    "httpx>=0.27.0",      # for FastAPI TestClient
+]
+
+# ---------------------------------------------------------------------------
+# Tool configuration
+# ---------------------------------------------------------------------------
+
+[tool.black]
+target-version = ["py311"]
+
+[tool.isort]
+# Must match black's formatting so the two tools don't fight each other
+profile = "black"
+line_length = 88
+known_first_party = ["core", "db", "services", "api", "cli", "config"]
+
+[tool.flake8]
+# E501  line too long  — black handles this, let it win
+# W503  line break before binary operator — conflicts with black style
+# E203  whitespace before ':' — black uses this in slice notation
+max-line-length = 88
+extend-ignore = ["E501", "W503", "E203"]
+exclude = [
+    ".git",
+    "__pycache__",
+    ".venv",
+    ".venv2",
+    "*.egg-info",
+    "build",
+    "dist",
+    # Legacy pre-v3 files kept for backward-compat only — not part of v3 codebase
+    "api/routes.py",
+    "api/sse.py",
+    "api/ws.py",
+    "worker.py",
+    "extractor.py",
+    "database.py",
+]
+per-file-ignores = [
+    # __init__.py files are often just re-exports — unused imports are fine
+    "__init__.py:F401",
+    # Test files: assert is fine, long fixture strings are fine
+    "tests/*:S101",
+    # FastAPI routers use Depends() in function default args — B008 is intentional
+    "api/v1/routers/*.py:B008",
+    # Legacy pre-v3 compat files — not linted
+    "api/routes.py:F401,F841,B008,B005,E501",
+    "api/sse.py:F401",
+]

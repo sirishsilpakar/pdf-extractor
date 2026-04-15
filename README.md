@@ -1,93 +1,343 @@
-# pdf-extractor
+# PDF TextExtract
 
+> A PDF text extraction pipeline with fully paginated REST API, OCR strategy pattern, SHA-256 deduplication, server-side rendered state, and an independent CLI module.
 
+---
 
-## Getting started
+## Table of Contents
 
-To make it easy for you to get started with GitLab, here's a list of recommended next steps.
+1. [Features](#features)
+2. [Architecture](#architecture)
+3. [Quick Start](#quick-start)
+4. [CLI Usage](#cli-usage)
+5. [API Reference](#api-reference)
+6. [Configuration](#configuration)
+7. [Project Structure](#project-structure)
+8. [Development](#development)
+9. [Testing](#testing)
 
-Already a pro? Just edit this README.md and make it your own. Want to make it easy? [Use the template at the bottom](#editing-this-readme)!
+---
 
-## Add your files
+## Features
 
-- [ ] [Create](https://docs.gitlab.com/ee/user/project/repository/web_editor.html#create-a-file) or [upload](https://docs.gitlab.com/ee/user/project/repository/web_editor.html#upload-a-file) files
-- [ ] [Add files using the command line](https://docs.gitlab.com/topics/git/add_files/#add-files-to-a-git-repository) or push an existing Git repository with the following command:
+| Capability | Detail |
+|---|---|
+| **Memory-safe uploads** | Files streamed to disk in 1 MB chunks so that RAM stays stable regardless of file count or size |
+| **SHA-256 deduplication** | Browser hashes first 64 KB client-side, already-extracted files are **never re-uploaded** |
+| **Server-side pagination** | All four data views (job files, results, extracted files, search) are paginated API calls |
+| **OCR Strategy pattern** | Startegy patter to allow swapping OCR engines without touching the pipeline code, (default: Tesseract) |
+| **Three-layer architecture** | `core/` <-> `services/` <-> `api/` / `cli/` |
+| **Independent CLI** | `pdf-extract run <dir>` works without a running server |
+| **Versioned REST API** | All endpoints under `/api/v1/` with full OpenAPI docs at `/docs` |
+| **Real-time SSE** | Compact metadata-only events, file list fetched separately via pagination |
+| **Thread-safe SQLite** | Repository pattern with WAL mode and non-destructive schema migration |
+
+---
+
+## Architecture
 
 ```
-cd existing_repo
-git remote add origin https://gitlab.uni-marburg.de/gurung/pdf-extractor.git
-git branch -M main
-git push -uf origin main
+┌──────────────────────────────────────────────────────────┐
+│                     Entry points                         │
+│  CLI (cli/main.py)          API (api/app.py + server.py) │
+└───────────────┬─────────────────────────┬────────────────┘
+                │                         │
+                │      DI via Depends()   │
+                ▼                         ▼
+┌──────────────────────────────────────────────────────────┐
+│                  Services layer                          │
+│  services/ocr/   (Strategy: OCREngine ABC)               │
+│  services/hasher.py  (SHA-256 fingerprinting)            │
+│  db/repository.py    (Repository pattern, SQLite)        │
+└───────────────────────────┬──────────────────────────────┘
+                            │
+                            ▼
+┌──────────────────────────────────────────────────────────┐
+│                    Core layer                            │
+│  core/pipeline.py   (hash dedup, multiprocess pool)      │
+│  core/worker.py     (per-file extraction, OCR injected)  │
+│  core/events.py     (typed StrEnum events + dataclasses) │
+│  core/transform.py  (text normalisation utilities)       │
+└──────────────────────────────────────────────────────────┘
 ```
 
-## Integrate with your tools
+**Design patterns used:** Strategy (OCR), Repository (DB), Observer (SSE broadcast), Factory (`create_app`), Dependency Injection (`Depends`).
 
-- [ ] [Set up project integrations](https://gitlab.uni-marburg.de/gurung/pdf-extractor/-/settings/integrations)
+---
 
-## Collaborate with your team
+## Quick Start
 
-- [ ] [Invite team members and collaborators](https://docs.gitlab.com/ee/user/project/members/)
-- [ ] [Create a new merge request](https://docs.gitlab.com/ee/user/project/merge_requests/creating_merge_requests.html)
-- [ ] [Automatically close issues from merge requests](https://docs.gitlab.com/ee/user/project/issues/managing_issues.html#closing-issues-automatically)
-- [ ] [Enable merge request approvals](https://docs.gitlab.com/ee/user/project/merge_requests/approvals/)
-- [ ] [Set auto-merge](https://docs.gitlab.com/user/project/merge_requests/auto_merge/)
+### Prerequisites
 
-## Test and Deploy
+```bash
+# macOS
+brew install tesseract tesseract-lang
 
-Use the built-in continuous integration in GitLab.
+# Debian/Ubuntu
+apt-get install tesseract-ocr tesseract-ocr-deu
+```
 
-- [ ] [Get started with GitLab CI/CD](https://docs.gitlab.com/ee/ci/quick_start/)
-- [ ] [Analyze your code for known vulnerabilities with Static Application Security Testing (SAST)](https://docs.gitlab.com/ee/user/application_security/sast/)
-- [ ] [Deploy to Kubernetes, Amazon EC2, or Amazon ECS using Auto Deploy](https://docs.gitlab.com/ee/topics/autodevops/requirements.html)
-- [ ] [Use pull-based deployments for improved Kubernetes management](https://docs.gitlab.com/ee/user/clusters/agent/)
-- [ ] [Set up protected environments](https://docs.gitlab.com/ee/ci/environments/protected_environments.html)
+Python ≥ 3.9 required.
 
-***
+### Install
 
-# Editing this README
+```bash
+git clone <repo-url>
+cd pdf-extractor
 
-When you're ready to make this README your own, just edit this file and use the handy template below (or feel free to structure it however you want - this is just a starting point!). Thanks to [makeareadme.com](https://www.makeareadme.com/) for this template.
+python -m venv .venv
+source .venv/bin/activate   # Windows: .venv\Scripts\activate
 
-## Suggestions for a good README
+pip install -e ".[dev]"
+```
 
-Every project is different, so consider which of these sections apply to yours. The sections used in the template are suggestions for most open source projects. Also keep in mind that while a README can be too long and detailed, too long is better than too short. If you think your README is too long, consider utilizing another form of documentation rather than cutting out information.
+### Run the server
 
-## Name
-Choose a self-explaining name for your project.
+```bash
+python server.py
+# -> http://localhost:8080
+# -> http://localhost:8080/docs  (Swagger UI)
+```
 
-## Description
-Let people know what your project can do specifically. Provide context and add a link to any reference visitors might be unfamiliar with. A list of Features or a Background subsection can also be added here. If there are alternatives to your project, this is a good place to list differentiating factors.
+Open `http://localhost:8080` in your browser to use the dashboard.
 
-## Badges
-On some READMEs, you may see small images that convey metadata, such as whether or not all the tests are passing for the project. You can use Shields to add some to your README. Many services also have instructions for adding a badge.
+---
 
-## Visuals
-Depending on what you are making, it can be a good idea to include screenshots or even a video (you'll frequently see GIFs rather than actual videos). Tools like ttygif can help, but check out Asciinema for a more sophisticated method.
+## CLI Usage
 
-## Installation
-Within a particular ecosystem, there may be a common way of installing things, such as using Yarn, NuGet, or Homebrew. However, consider the possibility that whoever is reading your README is a novice and would like more guidance. Listing specific steps helps remove ambiguity and gets people to using your project as quickly as possible. If it only runs in a specific context like a particular programming language version or operating system or has dependencies that have to be installed manually, also add a Requirements subsection.
+```
+pdf-extract --help
 
-## Usage
-Use examples liberally, and show the expected output if you can. It's helpful to have inline the smallest example of usage that you can demonstrate, while providing links to more sophisticated examples if they are too long to reasonably include in the README.
+Commands:
+  run      Run the extraction pipeline on a directory
+  status   Show database extraction statistics
+  reset    Wipe all pipeline state from the database
+  engines  List registered OCR engines and availability
+```
 
-## Support
-Tell people where they can go to for help. It can be any combination of an issue tracker, a chat room, an email address, etc.
+### Examples
 
-## Roadmap
-If you have ideas for releases in the future, it is a good idea to list them in the README.
+```bash
+# Extract a directory tree
+pdf-extract run ./my-pdfs/
 
-## Contributing
-State if you are open to contributions and what your requirements are for accepting them.
+# Custom output dir, force reprocess, custom DB
+pdf-extract run ./my-pdfs/ --output-dir /data/output --force --db /data/state.db
 
-For people who want to make changes to your project, it's helpful to have some documentation on how to get started. Perhaps there is a script that they should run or some environment variables that they need to set. Make these steps explicit. These instructions could also be useful to your future self.
+# Fast mode (lower DPI and shorter timeouts)
+pdf-extract run ./my-pdfs/ --fast
 
-You can also document commands to lint the code or run tests. These steps help to ensure high code quality and reduce the likelihood that the changes inadvertently break something. Having instructions for running tests is especially helpful if it requires external setup, such as starting a Selenium server for testing in a browser.
+# OCR-free (direct text extraction only)
+pdf-extract run ./my-pdfs/ --no-ocr
 
-## Authors and acknowledgment
-Show your appreciation to those who have contributed to the project.
+# Check DB stats
+pdf-extract status
+
+# List available OCR engines
+pdf-extract engines
+```
+
+---
+
+## Service Level Agreement (SLA) & Extraction Boundaries
+
+**Scope of Operations:** This extraction pipeline is specifically engineered for processing formal financial documentation in the German language (e.g., quarterly reports, balance sheets).
+
+**1. Supported Data Profiles (In Scope)**
+*   **Structured Digital PDFs:** Native, digitally generated PDF documents with machine readable text layers.
+*   **Scanned Financial Documents:** Flattened scans of financial reports requiring Optical Character Recognition (OCR) processing via Tesseract.
+
+**2. Formatting & Structural Degradation**
+*   **Positional Autonomy:** The pipeline extracts raw textual payloads. Physical layout positioning, font formatting, and typographical styling will **not** be preserved.
+*   **Table Data Constraints:** While tabular data is successfully extracted into text, specific row/column structural integrity, bounds, and cell layouts are not strictly guaranteed to map to the output identically.
+
+**3. Unsupported Elements (Out of Scope)**
+*   **Graphical Elements:** Illustrative diagrams, visual blocks, and standalone images containing no textual payload are ignored.
+*   **Degraded Inputs:** Heavily blurred scans, low DPI legacy documents, and physically damaged records will yield degraded confidence scores and may trigger extraction failures.
+*   **Non-Standard Inputs:** Handwritten notes, cursive inscriptions, or unrecognized encodings are not supported and are subject to failure.
+
+---
+
+## API Reference
+
+Interactive docs always available at **`/docs`** (Swagger) and **`/redoc`** (ReDoc) when the server is running.
+
+### Endpoints
+
+| Method | Path | Description |
+|---|---|---|
+| `POST` | `/api/v1/upload` | Stream upload one or more PDFs (chunked, 1 MB/chunk) |
+| `POST` | `/api/v1/upload/check-hashes` | Bulk hash check to see which files are already extracted |
+| `POST` | `/api/v1/job/start` | Start the extraction pipeline for uploaded file IDs |
+| `POST` | `/api/v1/job/cancel` | Cancel the running job |
+| `GET`  | `/api/v1/job/status` | Compact job metadata (no files list) |
+| `GET`  | `/api/v1/job/files?page=1&size=50` | Paginated active job file list |
+| `GET`  | `/api/v1/results?page=1&size=50` | Paginated extraction results from DB |
+| `GET`  | `/api/v1/results/{id}` | Single result with full text content |
+| `DELETE` | `/api/v1/results/{id}` | Remove a DB record (keeps .txt on disk) |
+| `GET`  | `/api/v1/files?page=1&size=50` | Paginated on disk `.txt` file listing |
+| `DELETE` | `/api/v1/files/{rel_path}` | Delete a `.txt` output file from disk |
+| `GET`  | `/api/v1/search?q=term&page=1&size=20` | Full text search across extracted documents |
+| `GET`  | `/api/events` | SSE stream for real-time progress |
+
+### Upload flow
+
+```
+Browser                             Server
+  │                                    │
+  │── hash first 64 KB of each file ──▶│
+  │◀── POST /check-hashes ────────────▶│ (already extracted? skip upload)
+  │                                    │
+  │── POST /upload (stream, 1 MB/ch) ─▶│ (only unprocessed files)
+  │◀── [{file_id, content_hash}] ──────│
+  │                                    │
+  │── POST /job/start {file_ids} ─────▶│
+  │◀── {ok: true} ─────────────────────│
+  │                                    │
+  │── GET /api/events (SSE) ──────────▶│ real-time progress
+  │── GET /job/files?page=1 ───────────│ poll for file status table
+```
+
+---
+
+## Configuration
+
+All settings are controlled via **environment variables**:
+
+| Variable | Default | Description |
+|---|---|---|
+| `WORKERS` / `WORKERS_OVERRIDE` | `cpu_count // 2` | Parallel worker processes |
+| `OCR_DPI` | `200` | Rendering DPI for OCR |
+| `TESSERACT_LANG` | `deu` | Tesseract language(s) |
+| `TESSERACT_PAGE_TIMEOUT_SECONDS` | `30` | Per-page OCR timeout |
+| `OCR_ON_IMAGE_AREA_THRESHOLD` | `0.15` | Image coverage ratio to trigger OCR |
+| `EXTRACTOR_DB_PATH` | `state.db` | SQLite database path |
+| `UPLOAD_DIR` | `uploads/` | Where uploaded files are stored |
+| `OUTPUT_DIR` | `extracted_files/` | Where `.txt` outputs are written |
+| `UPLOAD_CHUNK_SIZE` | `1048576` | Upload chunk size in bytes (1 MB) |
+| `PAGE_SIZE` | `50` | Default API page size |
+| `MAX_PAGE_SIZE` | `200` | Maximum API page size |
+| `OMP_THREAD_LIMIT` | `1` | OpenMP threads per worker (prevents thread storms) |
+
+---
+
+## Project Structure
+
+```
+pdf-extractor/
+├── core/                    # Zero dependency domain logic
+│   ├── events.py            # StrEnum events + typed dataclasses
+│   ├── pipeline.py          # Multiprocess pipeline, hash dedup
+│   ├── worker.py            # Per-file extraction, OCR injected
+│   └── transform.py         # Text normalisation utilities
+│
+├── services/                # Infrastructure implementations
+│   ├── hasher.py            # SHA-256 file fingerprinting
+│   └── ocr/
+│       ├── base.py          # OCREngine abstract base + OCRResult
+│       ├── tesseract.py     # TesseractOCREngine (picklable)
+│       └── registry.py      # Engine registry & get_default_engine()
+│
+├── db/
+│   └── repository.py        # DatabaseRepository (SQLite, thread-safe)
+│
+├── api/
+│   ├── app.py               # create_app() factory
+│   ├── lifespan.py          # Startup / shutdown context
+│   ├── job_manager.py       # JobManager class (O(1) dispatch table)
+│   ├── sse.py               # SSE broadcast utility
+│   └── v1/
+│       ├── schemas.py       # All Pydantic request/response models
+│       ├── deps.py          # FastAPI Depends() providers
+│       ├── router.py        # Versioned router aggregator
+│       └── routers/
+│           ├── upload.py    # POST /upload, POST /check-hashes
+│           ├── jobs.py      # start / cancel / status / files
+│           ├── results.py   # Paginated DB results
+│           ├── files.py     # Paginated on-disk .txt listing
+│           └── search.py    # Full-text search
+│
+├── cli/
+│   └── main.py              # click CLI: run / status / reset / engines
+│
+├── ui/
+│   ├── index.html           # Single-page dashboard
+│   ├── app.js               # API client, SSE, pagination, hash check
+│   └── style.css            # Design system
+│
+├── tests/
+│   ├── conftest.py
+│   ├── core/test_transform.py
+│   ├── services/test_hasher.py
+│   ├── services/test_ocr_strategy.py
+│   ├── db/test_repository.py
+│   └── api/test_upload.py
+│
+├── config.py                # All constants + env-var overrides
+├── server.py                # Uvicorn launcher
+├── main.py                  # Backward-compatible CLI
+├── transform.py             # Backward-compatible import
+└── pyproject.toml
+```
+
+---
+
+## Development
+
+```bash
+# Install with dev extras
+pip install -e ".[dev]"
+
+# Format
+black .
+
+# Run server with auto-reload
+uvicorn api.app:app --reload --port 8080
+
+# Run tests
+pytest tests/ -v
+```
+
+### Adding a new OCR engine
+
+```python
+# 1. Subclass OCREngine
+from services.ocr.base import OCREngine, OCRResult
+
+class MyEngine(OCREngine):
+    @property
+    def name(self) -> str: return "my-engine"
+    def is_available(self) -> bool: return True
+    def run(self, image, **kwargs) -> OCRResult:
+        text = my_ocr_library.extract(image)
+        return OCRResult(text=text, engine=self.name)
+
+# 2. Register it once on startup
+from services.ocr.registry import register
+register(MyEngine())
+```
+
+No other code needs to change, the pipeline picks it up automatically.
+
+---
+
+## Testing
+
+```bash
+# All unit tests (no external services required)
+pytest tests/core/ tests/services/ tests/db/ -v
+
+# API integration tests (requires httpx)
+pytest tests/api/ -v
+
+# Full suite
+pytest tests/ -v
+```
+
+Current coverage: **30 tests, 0 failures**.
+
+---
 
 ## License
-For open source projects, say how it is licensed.
 
-## Project status
-If you have run out of energy or time for your project, put a note at the top of the README saying that development has slowed down or stopped completely. Someone may choose to fork your project or volunteer to step in as a maintainer or owner, allowing your project to keep going. You can also make an explicit request for maintainers.
+MIT © 2026 Sanjay Gurung, Sapna Luthra, Sirish Silpakar — Philipps-Universität Marburg
