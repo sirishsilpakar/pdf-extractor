@@ -1,0 +1,6 @@
+{
+  "test1_plain.pdf": "This is a strictly plain text document.\nIt should be 100% extractable with high confidence.",
+  "test2_structured.pdf": "Quarterly Financial Report Q1 2026\nRevenue: e1,000,000\nExpenses: e800,000\nProfit: e200,000",
+  "test3_scanned_simple.pdf": "This is a scanned image with simple layout.\nTesseract OCR should detect this perfectly.",
+  "test4_scanned_complex.pdf": "FINANCIAL STATEMENT MATRIX\nAsset          |    Value\nLiquid Cash    |    $50k\nReal Estate    |    $2M"
+}
