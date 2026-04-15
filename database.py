@@ -24,8 +24,7 @@ def _connect(db_path=None) -> sqlite3.Connection:
 def init_db(db_path=None):
     """Create tables if they don't exist."""
     conn = _connect(db_path)
-    conn.executescript(
-        """
+    conn.executescript("""
         CREATE TABLE IF NOT EXISTS files (
             path           TEXT PRIMARY KEY,
             status         TEXT,
@@ -46,8 +45,7 @@ def init_db(db_path=None):
         );
 
         CREATE INDEX IF NOT EXISTS idx_et_filename ON extracted_texts(filename);
-    """
-    )
+    """)
     conn.commit()
     conn.close()
 

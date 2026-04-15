@@ -56,6 +56,9 @@ dev = [
 # Tool configuration
 # ---------------------------------------------------------------------------
 
+[tool.black]
+target-version = ["py311"]
+
 [tool.isort]
 # Must match black's formatting so the two tools don't fight each other
 profile = "black"
