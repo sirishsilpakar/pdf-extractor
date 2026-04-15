@@ -7,8 +7,6 @@ or ``python main.py`` continue to work
 
 from __future__ import annotations
 
-import sys
-
 
 def main() -> None:
     """Delegate to the click-based CLI (cli.main:cli)"""

@@ -22,8 +22,8 @@ async def lifespan(app: FastAPI):
     jm = get_manager()
     jm.register_broadcast(sse.broadcast)
 
-    # Initialise DB schema (idempotent)
-    db = get_db()
+    # Initialise DB schema (idempotent — called for side-effect only)
+    get_db()
 
     # Warn if no OCR engine is available
     try:

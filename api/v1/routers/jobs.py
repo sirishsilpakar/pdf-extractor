@@ -21,8 +21,8 @@ from api.v1.schemas import (
     PagedResponse,
     StartJobRequest,
 )
-from config import UPLOAD_DIR
 from config import OUTPUT_DIR as _PKG_OUTPUT_DIR
+from config import UPLOAD_DIR
 
 router = APIRouter()
 

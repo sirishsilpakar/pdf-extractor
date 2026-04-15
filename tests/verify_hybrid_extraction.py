@@ -1,9 +1,11 @@
+import json
 import os
 import shutil
+
 import pymupdf
 from PIL import Image, ImageDraw
+
 import worker
-import json
 
 
 def create_test_pdf(filename="test_hybrid.pdf"):

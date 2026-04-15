@@ -1,14 +1,13 @@
+import argparse
+import csv
+import importlib
+import json
+import multiprocessing as mp
 import os
 import sys
 import time
-import json
-import csv
-import argparse
-import importlib
 from dataclasses import dataclass
 from typing import Callable, Dict, List, Tuple
-import multiprocessing as mp
-
 
 import pymupdf
 from PIL import Image
@@ -268,7 +267,7 @@ def extract_marker_text(pdf_path: str) -> str:
 
     # Try standard path first to detect tables quickly
     try:
-        from marker.convert import TableConverter, PdfConverter, create_model_dict
+        from marker.convert import TableConverter, create_model_dict
 
         converter = TableConverter(artifact_dict=create_model_dict())
         rendered = converter(pdf_path)
@@ -454,10 +453,12 @@ def write_comparisons(
     for pdf_path in tqdm(pdf_files, desc="Comparing outputs", unit="file"):
         rel_no_ext = os.path.splitext(os.path.relpath(pdf_path, input_root))[0]
 
-        def out_for(ex_name: str) -> str:
-            return os.path.join(out_root, ex_name, f"{rel_no_ext}.txt")
-
-        texts = {name: _read_text_if_exists(out_for(name)) for name in extractors}
+        texts = {
+            name: _read_text_if_exists(
+                os.path.join(out_root, name, f"{rel_no_ext}.txt")
+            )
+            for name in extractors
+        }
 
         pairs: List[tuple[str, str]] = []
         if baseline and baseline in texts:

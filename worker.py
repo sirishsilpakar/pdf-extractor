@@ -1,22 +1,23 @@
+import json
 import os
 import time
-import json
-import pymupdf
-from PIL import Image
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
+import pymupdf
+from PIL import Image
+
+import transform as t
 from config import (
+    ENABLE_PAGE_LEVEL_OCR_THREADS,
     OCR_DPI,
+    OCR_LOW_TEXT_LENGTH_THRESHOLD,
+    OCR_ON_IMAGE_AREA_THRESHOLD,
+    PAGE_LEVEL_OCR_MAX_WORKERS,
     TESSERACT_LANG,
     TESSERACT_OEM,
-    TESSERACT_PSM,
     TESSERACT_PAGE_TIMEOUT_SECONDS,
-    ENABLE_PAGE_LEVEL_OCR_THREADS,
-    PAGE_LEVEL_OCR_MAX_WORKERS,
-    OCR_ON_IMAGE_AREA_THRESHOLD,
-    OCR_LOW_TEXT_LENGTH_THRESHOLD,
+    TESSERACT_PSM,
 )
-import transform as t
 
 pymupdf.TOOLS.mupdf_display_errors(False)
 
@@ -49,6 +50,7 @@ def ocr_page(page, config_args):
     pix = gray_pix = img = None
     try:
         import logging
+
         import pytesseract
 
         pix = page.get_pixmap(dpi=OCR_DPI)

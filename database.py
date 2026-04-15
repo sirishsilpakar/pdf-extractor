@@ -5,9 +5,9 @@ Two tables:
   extracted_texts — index of completed extractions; content lives on disk as .txt
 """
 
-import sqlite3
 import datetime
 import os
+import sqlite3
 
 from config import DB_PATH as _DEFAULT_DB
 
@@ -24,8 +24,7 @@ def _connect(db_path=None) -> sqlite3.Connection:
 def init_db(db_path=None):
     """Create tables if they don't exist."""
     conn = _connect(db_path)
-    conn.executescript(
-        """
+    conn.executescript("""
         CREATE TABLE IF NOT EXISTS files (
             path           TEXT PRIMARY KEY,
             status         TEXT,
@@ -46,8 +45,7 @@ def init_db(db_path=None):
         );
 
         CREATE INDEX IF NOT EXISTS idx_et_filename ON extracted_texts(filename);
-    """
-    )
+    """)
     conn.commit()
     conn.close()
 

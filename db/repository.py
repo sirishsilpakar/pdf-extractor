@@ -128,7 +128,6 @@ def _detect_legacy_version(conn: sqlite3.Connection) -> int:
         return 0
 
     files_cols = {row[1] for row in conn.execute("PRAGMA table_info(files)")}
-    texts_cols = {row[1] for row in conn.execute("PRAGMA table_info(extracted_texts)")}
 
     if "fts_pages" in tables:
         return 5  # Already at v5 (shouldn't reach here but be safe)
@@ -243,13 +242,11 @@ class DatabaseRepository:
                 logger.info("Database reset at %s", self._db_path)
             except sqlite3.OperationalError:
                 # fts_pages may not exist yet in very old DBs
-                conn.executescript(
-                    """
+                conn.executescript("""
                     DELETE FROM extracted_texts;
                     DELETE FROM files;
                     DELETE FROM runs;
-                """
-                )
+                """)
                 conn.commit()
             finally:
                 conn.close()

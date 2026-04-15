@@ -7,12 +7,9 @@ Includes a reindex endpoint for building the index from existing extractions
 
 from __future__ import annotations
 
-import asyncio
 import math
-from typing import AsyncGenerator
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Query
-from fastapi.responses import StreamingResponse
 
 from api.v1.deps import DBDep
 from api.v1.schemas import SearchResponse, SearchResultItem
@@ -84,8 +81,9 @@ async def reindex(
     db: DBDep = ...,  # type: ignore[assignment]
 ) -> dict:
     def _run():
-        from api import sse
         import asyncio
+
+        from api import sse
 
         loop = sse._loop  # type: ignore[attr-defined]
 

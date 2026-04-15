@@ -8,18 +8,11 @@ import uuid
 from pathlib import Path
 from typing import List, Optional
 
-import database
-from fastapi import (
-    APIRouter,
-    File,
-    HTTPException,
-    Query,
-    Request,
-    UploadFile,
-)
+from fastapi import APIRouter, File, HTTPException, Query, Request, UploadFile
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
 
+import database
 from api import job_manager, sse
 
 _PKG_DIR = Path(__file__).parent.parent

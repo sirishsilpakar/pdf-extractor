@@ -320,6 +320,7 @@ def test_fts_not_empty_after_index(tmp_db):
 def test_schema_version_is_set(tmp_db):
     """After init_schema the user_version pragma must equal _SCHEMA_VERSION"""
     import sqlite3 as _sqlite3
+
     from db.repository import _SCHEMA_VERSION
 
     conn = _sqlite3.connect(str(tmp_db._db_path))
