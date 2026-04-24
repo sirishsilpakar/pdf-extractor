@@ -191,6 +191,7 @@ def process_file(
     try:
         rel_path = os.path.relpath(file_path, input_dir_root)
         base_name = os.path.splitext(rel_path)[0]
+        profiler = t.DocProfiler(threshold=0.5)
 
         with pymupdf.open(file_path) as doc:
             num_pages = doc.page_count
@@ -258,7 +259,7 @@ def process_file(
 
         final_text = "".join(full_text)
         with open(out_txt_path, "w", encoding="utf-8") as f:
-            f.write(t.preprocess_text(final_text))
+            f.write(t.preprocess_text(final_text, profiler.noise_lines))
 
         with open(out_meta_path, "w", encoding="utf-8") as f:
             json.dump(metadata_report, f, indent=2)
