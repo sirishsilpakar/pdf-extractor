@@ -216,3 +216,5 @@ script.sh
 *.meta.json*
 *.db
 *.db-*
+
+.venv/*

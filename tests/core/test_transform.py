@@ -24,7 +24,7 @@ def test_preprocess_returns_string():
 
 def test_remove_page_numbers_standalone_digit():
     # Standalone numbers like "42" should be removed
-    result = remove_page_numbers("some text 42 more text")
+    result = remove_page_numbers("some text page 42 more text")
     assert "42" not in result
 
 

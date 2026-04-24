@@ -5,7 +5,7 @@ import shutil
 import pymupdf
 from PIL import Image, ImageDraw
 
-import worker
+import core.worker as worker
 
 
 def create_test_pdf(filename="test_hybrid.pdf"):

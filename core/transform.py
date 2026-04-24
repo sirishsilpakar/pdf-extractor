@@ -1,11 +1,4 @@
-import os
 import re
-import sys
-import time
-from pathlib import Path
-
-from watchdog.events import FileSystemEventHandler
-from watchdog.observers import Observer
 
 
 class DocProfiler:
@@ -96,12 +89,16 @@ RE_PAGE_PATTERN = [
 
 
 def preprocess_text(text, noise_list=None):
-    ## Header footer noise
+    # Header footer noise
     if noise_list:
         lines = text.splitlines()
         # Remove line if its normalized version is in our noise list
         text = "\n".join(
-            [l for l in lines if re.sub(r"\d+", "", l).strip() not in noise_list]
+            [
+                line
+                for line in lines
+                if re.sub(r"\d+", "", line).strip() not in noise_list
+            ]
         )
 
     text = remove_page_numbers(text)
