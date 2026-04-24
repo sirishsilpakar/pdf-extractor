@@ -12,7 +12,7 @@ from typing import Optional
 
 import database
 from config import JOB_TIMEOUT_SECONDS, LOG_DIR, LOG_MAX_FILES, WORKERS
-from worker import process_file
+from core.worker import process_file
 
 logger = logging.getLogger(__name__)
 
