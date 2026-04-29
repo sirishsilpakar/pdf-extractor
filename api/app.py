@@ -17,6 +17,7 @@ from fastapi.staticfiles import StaticFiles
 
 from api.lifespan import lifespan
 from api.v1.router import v1_router
+from config import SERVE_UI
 
 _PKG_DIR = Path(__file__).parent.parent
 _UI_DIR = _PKG_DIR / "ui"
@@ -56,18 +57,20 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
 
-    # Static UI assets
-    app.mount("/ui", StaticFiles(directory=str(_UI_DIR)), name="ui")
-
     # Versioned REST routes
     app.include_router(v1_router, prefix="/api")
 
     # SSE stream
     app.add_api_route("/api/events", _sse_endpoint, tags=["Events"])
 
-    @app.get("/")
-    async def index():
-        return FileResponse(str(_UI_DIR / "index.html"))
+    # Static UI only mounted when SERVE_UI is True (default)
+    # Pass --no-ui or set SERVE_UI=false to run in headless / API-only mode
+    if SERVE_UI and _UI_DIR.is_dir():
+        app.mount("/ui", StaticFiles(directory=str(_UI_DIR)), name="ui")
+
+        @app.get("/")
+        async def index():
+            return FileResponse(str(_UI_DIR / "index.html"))
 
     return app
 
