@@ -1,12 +1,15 @@
 """Runs router /api/v1/runs
 
 Each extraction pipeline invocation is stored as a run record
-Endpoints: list (paginated), single, per-run file list
+Endpoints: list (paginated), single, per-run file list, per run activity log
 """
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from fastapi import APIRouter, HTTPException, Query
+from fastapi.responses import PlainTextResponse
 
 from api.v1.deps import DBDep
 from api.v1.schemas import PagedResponse, ResultRecord, RunRecord
@@ -74,3 +77,42 @@ async def get_run_files(
         r.setdefault("run_started_at", None)
         items.append(ResultRecord(**r))
     return PagedResponse.build(total=total, page=page, size=size, items=items)
+
+
+@router.get(
+    "/{run_id}/log",
+    response_class=PlainTextResponse,
+    summary="Get the activity log for a run",
+    description=(
+        "Returns the per run activity log as plain text. "
+        "The log is written to disk when the pipeline finishes. "
+        "Returns 404 if the run does not exist or the log has not been written yet."
+    ),
+    tags=["Runs"],
+)
+async def get_run_log(
+    run_id: str,
+    db: DBDep = ...,  # type: ignore[assignment]
+) -> PlainTextResponse:
+    run = db.get_run(run_id)
+    if not run:
+        raise HTTPException(404, detail=f"Run {run_id!r} not found.")
+
+    log_path = run.get("log_path")
+    if not log_path:
+        raise HTTPException(
+            404,
+            detail=(
+                f"Activity log for run {run_id!r} has not been written yet. "
+                "The log is saved when the pipeline completes."
+            ),
+        )
+
+    try:
+        content = Path(log_path).read_text(encoding="utf-8", errors="replace")
+    except FileNotFoundError:
+        raise HTTPException(404, detail=f"Log file missing on disk: {log_path}")
+    except Exception as exc:
+        raise HTTPException(500, detail=f"Could not read log file: {exc}")
+
+    return PlainTextResponse(content)

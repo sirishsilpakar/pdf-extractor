@@ -103,6 +103,15 @@ async def start_job(
         else req.output_dir
     )
 
+    # Use request timeout if provided, otherwise fallback to global config
+    from config import GLOBAL_JOB_TIMEOUT_SECONDS
+
+    timeout_seconds = (
+        req.timeout_seconds
+        if req.timeout_seconds is not None
+        else GLOBAL_JOB_TIMEOUT_SECONDS
+    )
+
     started = jm.start_job(
         file_entries=entries,
         input_dir=str(manifest_dir),
@@ -111,6 +120,7 @@ async def start_job(
         settings=req.settings,
         ocr_engine=ocr,
         db=db,
+        timeout_seconds=timeout_seconds,
     )
 
     if not started:
