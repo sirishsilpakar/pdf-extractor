@@ -583,28 +583,49 @@ class DatabaseRepository:
                 conn.close()
 
     def get_extracted_texts(
-        self, page: int = 1, size: int = 50
+        self,
+        page: int = 1,
+        size: int = 50,
+        run_id: Optional[str] = None,
+        rel_path_prefix: Optional[str] = None,
     ) -> tuple[int, list[dict[str, Any]]]:
-        """Return '(total_count, page_items)' ordered by most-recently processed"""
+        """Return '(total_count, page_items)' filtered by run_id or rel_path prefix."""
         offset = (max(page, 1) - 1) * size
+
+        where_clauses = []
+        params: list[Any] = []
+
+        if run_id:
+            where_clauses.append("e.run_id = ?")
+            params.append(run_id)
+        if rel_path_prefix:
+            # Matches directories: rel_path starts with prefix
+            where_clauses.append("e.rel_path LIKE ?")
+            params.append(f"{rel_path_prefix.rstrip('/')}/%")
+
+        where_sql = ""
+        if where_clauses:
+            where_sql = "WHERE " + " AND ".join(where_clauses)
+
         with self._lock:
             conn = self._connect()
             try:
                 total: int = conn.execute(
-                    "SELECT COUNT(*) FROM extracted_texts"
+                    f"SELECT COUNT(*) FROM extracted_texts e {where_sql}", params
                 ).fetchone()[0]
                 rows = conn.execute(
-                    """
+                    f"""
                     SELECT e.id, e.run_id, e.source_path, e.filename, e.rel_path,
                            e.txt_path, e.method, e.char_count, e.page_count,
                            e.content_hash, e.processed_at, e.confidence, e.flags,
                            r.started_at AS run_started_at
                     FROM extracted_texts e
                     LEFT JOIN runs r ON r.run_id = e.run_id
-                    ORDER BY e.processed_at DESC
+                    {where_sql}
+                    ORDER BY r.started_at DESC, r.run_id, e.processed_at DESC
                     LIMIT ? OFFSET ?
                     """,
-                    (size, offset),
+                    params + [size, offset],
                 ).fetchall()
                 return total, [dict(r) for r in rows]
             finally:
