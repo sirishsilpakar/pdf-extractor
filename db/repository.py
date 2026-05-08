@@ -31,7 +31,7 @@ from typing import Any, Optional
 logger = logging.getLogger(__name__)
 
 
-_SCHEMA_VERSION = 11
+_SCHEMA_VERSION = 15
 
 # Each value is a list of SQL statements for that migration step
 # Statements are executed individually so we can catch "already exists" errors
@@ -117,6 +117,47 @@ _MIGRATIONS: dict[int, list[str]] = {
         # Stores the absolute path to the per run activity log .txt file
         "ALTER TABLE runs ADD COLUMN log_path TEXT",
     ],
+    12: [
+        """
+        CREATE TABLE IF NOT EXISTS batches (
+            batch_id                TEXT PRIMARY KEY,
+            resolved_path           TEXT NOT NULL,
+            mode                    TEXT NOT NULL DEFAULT 'local_ref',
+            is_folder               INTEGER NOT NULL DEFAULT 1,
+            scan_status             TEXT NOT NULL DEFAULT 'scanning',
+            pdf_count               INTEGER NOT NULL DEFAULT 0,
+            already_processed_count INTEGER,
+            error_message           TEXT,
+            created_at              TIMESTAMP NOT NULL,
+            updated_at              TIMESTAMP NOT NULL
+        )
+        """,
+    ],
+    13: [
+        """
+        CREATE TABLE IF NOT EXISTS batch_files (
+            id            INTEGER PRIMARY KEY AUTOINCREMENT,
+            batch_id      TEXT NOT NULL REFERENCES batches(batch_id) ON DELETE CASCADE,
+            name          TEXT NOT NULL,
+            rel_path      TEXT NOT NULL,
+            size_bytes    INTEGER NOT NULL DEFAULT 0,
+            content_hash  TEXT,
+            is_processed  INTEGER NOT NULL DEFAULT 0
+        )
+        """,
+        "CREATE INDEX IF NOT EXISTS idx_bf_batch ON batch_files(batch_id)",
+    ],
+    14: [
+        # Patch existing batches tables that were created without updated_at.
+        # _run_sql ignores 'duplicate column name' so safe to run on any DB.
+        "ALTER TABLE batches ADD COLUMN updated_at TIMESTAMP",
+    ],
+    15: [
+        # Drop the unique index on resolved_path that was created in an earlier
+        # iteration. Registering the same path again should be idempotent, not
+        # an error. The router now handles the "already exists" case explicitly.
+        "DROP INDEX IF EXISTS idx_batches_path",
+    ],
 }
 
 
@@ -193,6 +234,39 @@ class DatabaseRepository:
     @staticmethod
     def _now() -> str:
         return datetime.datetime.now().isoformat()
+
+    def _enrich_batch_counts(
+        self, conn: sqlite3.Connection, batches: list[dict]
+    ) -> None:
+        """Overwrites already_processed_count with real-time counts for completed scans."""
+        # Only run this query for batches that are done scanning
+        target_batches = [b for b in batches if b.get("scan_status") == "done"]
+        if not target_batches:
+            return
+
+        batch_map = {b["batch_id"]: b for b in target_batches}
+        placeholders = ",".join("?" * len(batch_map))
+        ids = list(batch_map.keys())
+
+        rows = conn.execute(
+            f"""
+            SELECT bf.batch_id, COUNT(*)
+              FROM batch_files bf
+             WHERE bf.batch_id IN ({placeholders})
+               AND bf.content_hash IN (SELECT content_hash FROM extracted_texts WHERE content_hash IS NOT NULL)
+             GROUP BY bf.batch_id
+            """,
+            ids,
+        ).fetchall()
+
+        # Default these to zero first in case no files intersect
+        for b in target_batches:
+            b["already_processed_count"] = 0
+
+        for row in rows:
+            bid, count = row[0], row[1]
+            if bid in batch_map:
+                batch_map[bid]["already_processed_count"] = count
 
     # ------------------------------------------------------------------
     # Schema management (versioned migrations)
@@ -537,25 +611,12 @@ class DatabaseRepository:
         with self._lock:
             conn = self._connect()
             try:
-                conn.execute(
+                cursor = conn.execute(
                     """
-                    INSERT INTO extracted_texts
+                    INSERT OR REPLACE INTO extracted_texts
                         (run_id, source_path, filename, rel_path, txt_path, method,
                          char_count, page_count, content_hash, processed_at, confidence, flags, txt_hash)
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    ON CONFLICT(filename) DO UPDATE SET
-                        run_id       = excluded.run_id,
-                        source_path  = excluded.source_path,
-                        rel_path     = excluded.rel_path,
-                        txt_path     = excluded.txt_path,
-                        method       = excluded.method,
-                        char_count   = excluded.char_count,
-                        page_count   = excluded.page_count,
-                        content_hash = excluded.content_hash,
-                        processed_at = excluded.processed_at,
-                        confidence   = excluded.confidence,
-                        flags        = excluded.flags,
-                        txt_hash     = excluded.txt_hash
                     """,
                     (
                         run_id,
@@ -574,11 +635,7 @@ class DatabaseRepository:
                     ),
                 )
                 conn.commit()
-                # lastrowid = 0 for ON CONFLICT DO UPDATE; always fetch via filename
-                row = conn.execute(
-                    "SELECT id FROM extracted_texts WHERE filename = ?", (filename,)
-                ).fetchone()
-                return row[0] if row else 0
+                return cursor.lastrowid if cursor.lastrowid else 0
             finally:
                 conn.close()
 
@@ -892,3 +949,227 @@ class DatabaseRepository:
                 progress_cb(done, total)
 
         return done
+
+    # ------------------------------------------------------------------
+    # Batch ingestion
+    # ------------------------------------------------------------------
+
+    def create_batch(
+        self,
+        batch_id: str,
+        resolved_path: str,
+        mode: str,
+        is_folder: bool,
+    ) -> None:
+        """Insert a new batch row with scan_status='scanning'.
+
+        Both created_at and updated_at are supplied explicitly to avoid NOT NULL
+        constraint failures regardless of SQLite version or pre existing schema.
+        """
+        with self._lock:
+            conn = self._connect()
+            try:
+                conn.execute(
+                    """
+                    INSERT INTO batches
+                        (batch_id, resolved_path, mode, is_folder,
+                         scan_status, pdf_count, created_at, updated_at)
+                    VALUES (?, ?, ?, ?, 'scanning', 0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                    """,
+                    (batch_id, resolved_path, mode, int(is_folder)),
+                )
+                conn.commit()
+            finally:
+                conn.close()
+
+    def clear_batch_files(self, batch_id: str) -> None:
+        """Delete all cached file rows for this batch to facilitate a completely fresh rescan."""
+        with self._lock:
+            conn = self._connect()
+            try:
+                conn.execute("DELETE FROM batch_files WHERE batch_id = ?", (batch_id,))
+                conn.commit()
+            finally:
+                conn.close()
+
+    def insert_batch_files(self, batch_id: str, files: list[dict]) -> None:
+        """Bulk insert batch_files rows.
+
+        Each dict must have keys: name, rel_path, size_bytes, content_hash, is_processed.
+        """
+        with self._lock:
+            conn = self._connect()
+            try:
+                conn.executemany(
+                    """
+                    INSERT INTO batch_files
+                        (batch_id, name, rel_path, size_bytes, content_hash, is_processed)
+                    VALUES (:batch_id, :name, :rel_path, :size_bytes, :content_hash, :is_processed)
+                    """,
+                    [{"batch_id": batch_id, **f} for f in files],
+                )
+                conn.commit()
+            finally:
+                conn.close()
+
+    def update_batch_files_processed(
+        self, batch_id: str, known_hashes: list[str]
+    ) -> None:
+        """Bulk mark existing batch_files matching any of these hashes as processed=1."""
+        if not known_hashes:
+            return
+        placeholders = ",".join("?" * len(known_hashes))
+        with self._lock:
+            conn = self._connect()
+            try:
+                conn.execute(
+                    f"""
+                    UPDATE batch_files
+                       SET is_processed = 1
+                     WHERE batch_id = ?
+                       AND content_hash IN ({placeholders})
+                    """,
+                    [batch_id, *known_hashes],
+                )
+                conn.commit()
+            finally:
+                conn.close()
+
+    def get_processed_hash_set(self, hashes: list[str]) -> set[str]:
+        """Return the subset of hashes already present in extracted_texts."""
+        if not hashes:
+            return set()
+        placeholders = ",".join("?" * len(hashes))
+        with self._lock:
+            conn = self._connect()
+            try:
+                rows = conn.execute(
+                    f"SELECT content_hash FROM extracted_texts"
+                    f" WHERE content_hash IN ({placeholders})",
+                    hashes,
+                ).fetchall()
+                return {row[0] for row in rows if row[0]}
+            finally:
+                conn.close()
+
+    def update_batch_status(self, batch_id: str, scan_status: str) -> None:
+        """Reset a batch's scan status (e.g. to SCANNING)."""
+        with self._lock:
+            conn = self._connect()
+            try:
+                conn.execute(
+                    "UPDATE batches SET scan_status = ? WHERE batch_id = ?",
+                    (scan_status, batch_id),
+                )
+                conn.commit()
+            finally:
+                conn.close()
+
+    def update_batch_scan(
+        self,
+        batch_id: str,
+        *,
+        pdf_count: int,
+        already_processed_count: int,
+        status: Any,  # ScanStatus enum or str
+        error: str | None = None,
+    ) -> None:
+        """Update batch scan result after scan_batch_task completes or errors."""
+        status_val = status.value if hasattr(status, "value") else str(status)
+        with self._lock:
+            conn = self._connect()
+            try:
+                conn.execute(
+                    """
+                    UPDATE batches
+                       SET scan_status=?, pdf_count=?,
+                           already_processed_count=?, error_message=?,
+                           updated_at=CURRENT_TIMESTAMP
+                     WHERE batch_id=?
+                    """,
+                    (status_val, pdf_count, already_processed_count, error, batch_id),
+                )
+                conn.commit()
+            finally:
+                conn.close()
+
+    def get_batch(self, batch_id: str) -> Optional[dict]:
+        """Fetch a single batch row as a dict, or None if not found."""
+        with self._lock:
+            conn = self._connect()
+            try:
+                row = conn.execute(
+                    "SELECT * FROM batches WHERE batch_id=?", (batch_id,)
+                ).fetchone()
+                if not row:
+                    return None
+                b_dict = dict(row)
+                self._enrich_batch_counts(conn, [b_dict])
+                return b_dict
+            finally:
+                conn.close()
+
+    def get_batch_by_path(self, resolved_path: str) -> Optional[dict]:
+        """Return the most recent batch row for a given resolved_path, or None."""
+        with self._lock:
+            conn = self._connect()
+            try:
+                row = conn.execute(
+                    "SELECT * FROM batches WHERE resolved_path=? ORDER BY created_at DESC LIMIT 1",
+                    (resolved_path,),
+                ).fetchone()
+                if not row:
+                    return None
+                b_dict = dict(row)
+                self._enrich_batch_counts(conn, [b_dict])
+                return b_dict
+            finally:
+                conn.close()
+
+    def get_recent_batches(self, limit: int = 20) -> list[dict]:
+        """Return list of recently created batches."""
+        with self._lock:
+            conn = self._connect()
+            try:
+                rows = conn.execute(
+                    "SELECT * FROM batches ORDER BY created_at DESC LIMIT ?",
+                    (limit,),
+                ).fetchall()
+                batch_dicts = [dict(r) for r in rows]
+                self._enrich_batch_counts(conn, batch_dicts)
+                return batch_dicts
+            finally:
+                conn.close()
+
+    def get_batch_files(
+        self, batch_id: str, page: int, size: int
+    ) -> tuple[int, list[dict]]:
+        """Return (total_count, page_rows) for a batch's file list."""
+        offset = (page - 1) * size
+        with self._lock:
+            conn = self._connect()
+            try:
+                total = conn.execute(
+                    "SELECT COUNT(*) FROM batch_files WHERE batch_id=?", (batch_id,)
+                ).fetchone()[0]
+                rows = conn.execute(
+                    """
+                    SELECT bf.name, bf.rel_path, bf.size_bytes, bf.content_hash,
+                           CASE WHEN et.content_hash IS NOT NULL THEN 1 ELSE 0 END as is_processed
+                      FROM batch_files bf
+                      LEFT JOIN (SELECT DISTINCT content_hash FROM extracted_texts) et
+                        ON bf.content_hash = et.content_hash
+                     WHERE bf.batch_id=?
+                     ORDER BY bf.rel_path
+                     LIMIT ? OFFSET ?
+                    """,
+                    (batch_id, size, offset),
+                ).fetchall()
+                return total, [dict(r) for r in rows]
+            finally:
+                conn.close()
+
+    def get_batch_resolved_path(self, batch_id: str) -> str | None:
+        """Return just the resolved_path for a batch, or None if not found."""
+        row = self.get_batch(batch_id)
+        return row["resolved_path"] if row else None

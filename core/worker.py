@@ -465,6 +465,7 @@ def process_file(
             rel_path="",
             txt_path="",
             content_hash="",
+            txt_hash="",
             confidence=None,
             flags=None,
         )
