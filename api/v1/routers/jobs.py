@@ -1,6 +1,14 @@
 """Job control router /api/v1/job/
 
 Endpoints: start, cancel, status, files (paginated)
+
+File ingestion
+--------------
+'StartJobRequest.file_ids' accepts two kinds of IDs, resolved in this order:
+
+1. Upload IDs — UUID directories under 'UPLOAD_DIR' created by 'POST /upload'. Files are hard linked into a manifest directory.
+
+2. Reference IDs — opaque UUIDs registered by 'POST /upload/reference'. The pipeline reads files directly from the server's local path no copy is made.
 """
 
 from __future__ import annotations
@@ -14,6 +22,7 @@ from typing import List
 from fastapi import APIRouter, HTTPException, Query
 
 from api.job_manager import FileEntry, JobManager
+from api.v1 import ref_registry
 from api.v1.deps import DBDep, JobManagerDep, OCRDep
 from api.v1.schemas import (
     FileEntryResponse,
@@ -31,7 +40,8 @@ router = APIRouter()
     "/start",
     summary="Start the extraction pipeline",
     description=(
-        "Start the pipeline for a set of previously uploaded file_ids."
+        "Start the pipeline for a set of previously uploaded file_ids or "
+        "reference IDs registered via POST /upload/reference. "
         "Set 'force=true' to reprocess files whose hash is already in the DB."
     ),
 )
@@ -43,58 +53,148 @@ async def start_job(
 ) -> dict:
     jm: JobManager
 
-    # Collect PDFs from each uploaded UUID directory
+    # Collect PDFs (supports both upload IDs and server local reference IDs)
     entries: List[FileEntry] = []
     missing: List[str] = []
+    # Track which entries came from references
+    ref_entries: List[FileEntry] = []
 
     for fid in req.file_ids:
+        # Try as an uploaded file directory
         fid_dir = UPLOAD_DIR / fid
-        if not fid_dir.exists():
-            missing.append(fid)
-            continue
-        pdfs = list(fid_dir.rglob("*.pdf"))
-        if not pdfs:
-            missing.append(fid)
-            continue
-        for pdf in pdfs:
-            entries.append(
-                FileEntry(
-                    name=pdf.name,
-                    path=str(pdf),
-                    size_bytes=pdf.stat().st_size,
+        if fid_dir.exists() and fid_dir.is_dir():
+            pdfs = list(fid_dir.rglob("*.pdf"))
+            if not pdfs:
+                missing.append(fid)
+                continue
+            for pdf in pdfs:
+                entries.append(
+                    FileEntry(
+                        name=pdf.name,
+                        path=str(pdf),
+                        size_bytes=pdf.stat().st_size,
+                        upload_rel=str(pdf.relative_to(fid_dir)),
+                    )
                 )
-            )
+            continue
 
-    # Missing file_ids are non-fatal, they likely weren't uploaded because
-    # the browser's pre-upload hash-check found them already processed
+        # Try as a local path reference ID
+        ref_path_str = ref_registry.lookup(fid)
+        if ref_path_str is not None:
+            ref_path = Path(ref_path_str)
+            if not ref_path.exists():
+                missing.append(fid)
+                continue
+
+            if ref_path.is_dir():
+                # Filter by selected files if provided for this ref_id
+                selected = (req.selected_files or {}).get(fid)
+                if selected:
+                    pdfs = [ref_path / f for f in selected if (ref_path / f).exists()]
+                else:
+                    # Recursive search as before (case-insensitive)
+                    pdfs = [
+                        p for p in ref_path.rglob("*") if p.suffix.lower() == ".pdf"
+                    ]
+
+                if not pdfs:
+                    missing.append(fid)
+                    continue
+                for pdf in pdfs:
+                    entry = FileEntry(
+                        name=pdf.name,
+                        path=str(pdf),
+                        size_bytes=pdf.stat().st_size if pdf.exists() else 0,
+                        # Store the relative path from the ref root for hierarchy
+                        upload_rel=str(pdf.relative_to(ref_path)),
+                    )
+                    entries.append(entry)
+                    ref_entries.append(entry)
+            else:
+                # Single PDF file reference
+                entry = FileEntry(
+                    name=ref_path.name,
+                    path=str(ref_path),
+                    size_bytes=ref_path.stat().st_size,
+                    upload_rel=ref_path.name,
+                )
+                entries.append(entry)
+                ref_entries.append(entry)
+            continue
+
+        # Neither uploaded nor registered
+        missing.append(fid)
+
+    # Missing file_ids are skippedwhen other IDs resolved successfully
     if missing and not entries:
         raise HTTPException(
             400,
             detail=f"No PDFs found for any of the {len(missing)} file ID(s).",
         )
     if not entries:
-        raise HTTPException(400, detail="No PDFs found in the uploaded file IDs.")
+        raise HTTPException(400, detail="No PDFs found in the provided file IDs.")
 
-    # Build a manifest directory of hard-links (or symlinks as fallback)
-    # Hard-links: zero data copy, zero extra disk space, instant at any scale
-    # The pipeline's os.walk then sees a flat directory of all PDFs to process
-    manifest_dir = UPLOAD_DIR / f"manifest_{uuid.uuid4().hex[:8]}"
-    manifest_dir.mkdir()
+    # Build a manifest directory for uploaded files with hard links
+    # Reference entries are excluded as the pipeline reads them in-place
+    ref_paths = {e.path for e in ref_entries}
+    upload_entries = [e for e in entries if e.path not in ref_paths]
 
-    for entry in entries:
-        dest = manifest_dir / entry.name
-        # Resolve name collisions (different dirs may have same filename)
-        if dest.exists():
-            prefix = hex(abs(hash(entry.path)) % 0xFFFF)[2:]
-            dest = manifest_dir / f"{prefix}_{entry.name}"
-        try:
-            os.link(entry.path, dest)  # hard-link means no copy, no extra space
-        except OSError:
+    # Determine the input root for the pipeline
+    # If all files are references from the same folder, use that folder directly
+    # Otherwise (mix of uploads + references, or references from multiple folders),
+    # build a manifest directory and symlink everything into it
+    manifest_dir: Path | None = None
+
+    if upload_entries or (
+        ref_entries and len({Path(e.path).parent for e in ref_entries}) > 1
+    ):
+        # Need a unified manifest directory
+        manifest_dir = UPLOAD_DIR / f"manifest_{uuid.uuid4().hex[:8]}"
+        manifest_dir.mkdir()
+
+        # Hard-link uploaded files
+        for entry in upload_entries:
+            rel = Path(entry.upload_rel) if entry.upload_rel else Path(entry.name)
+            dest = manifest_dir / rel
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            if dest.exists():
+                prefix = hex(abs(hash(entry.path)) % 0xFFFF)[2:]
+                dest = dest.with_name(f"{prefix}_{dest.name}")
             try:
-                dest.symlink_to(Path(entry.path).resolve())  # symlink fallback
+                os.link(entry.path, dest)
             except OSError:
-                shutil.copy2(entry.path, str(dest))  # copy as last resort
-        entry.path = str(dest)
+                try:
+                    dest.symlink_to(Path(entry.path).resolve())
+                except OSError:
+                    shutil.copy2(entry.path, str(dest))
+            entry.path = str(dest)
+
+        # Symlink reference files into manifest, preserving relative hierarchy
+        for entry in ref_entries:
+            rel = Path(entry.upload_rel) if entry.upload_rel else Path(entry.name)
+            dest = manifest_dir / rel
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            if not dest.exists():
+                try:
+                    dest.symlink_to(Path(entry.path).resolve())
+                except OSError:
+                    shutil.copy2(entry.path, str(dest))
+            entry.path = str(dest)
+
+        input_dir = str(manifest_dir)
+
+    elif ref_entries:
+        # All files are from a single reference folder so can use it directly
+        single_ref_root = str(Path(ref_entries[0].path).parent)
+        # If it's a single file ref, the root is just that file's parent
+        # For folder refs, reconstruct the original registered root
+        ref_id_for_single = req.file_ids[0]  # only one ref_id in this branch
+        registered_root = ref_registry.lookup(ref_id_for_single)
+        input_dir = registered_root if registered_root else single_ref_root
+
+    else:
+        # No entries after filtering
+        raise HTTPException(400, detail="No processable PDFs found.")
 
     # Resolve output directory
     output_dir = (
@@ -103,14 +203,24 @@ async def start_job(
         else req.output_dir
     )
 
+    # Use request timeout if provided, otherwise fallback to global config
+    from config import GLOBAL_JOB_TIMEOUT_SECONDS
+
+    timeout_seconds = (
+        req.timeout_seconds
+        if req.timeout_seconds is not None
+        else GLOBAL_JOB_TIMEOUT_SECONDS
+    )
+
     started = jm.start_job(
         file_entries=entries,
-        input_dir=str(manifest_dir),
+        input_dir=input_dir,
         output_dir=output_dir,
         force=req.force,
         settings=req.settings,
         ocr_engine=ocr,
         db=db,
+        timeout_seconds=timeout_seconds,
     )
 
     if not started:

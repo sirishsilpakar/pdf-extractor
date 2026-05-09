@@ -18,6 +18,10 @@ WORKERS = (
 # This prevents a single corrupt or complex file from stalling the entire pipeline.
 JOB_TIMEOUT_SECONDS = 120  # 2 minutes
 
+# The maximum time in seconds the entire pipeline run is allowed to take.
+# 0 = no limit.
+GLOBAL_JOB_TIMEOUT_SECONDS = int(os.getenv("GLOBAL_JOB_TIMEOUT_SECONDS", "0"))
+
 # If the average number of text characters on the first few pages is below this,
 # the file is classified as needing OCR.
 TEXT_CHARACTER_THRESHOLD = 50
@@ -116,3 +120,15 @@ os.makedirs(OUTPUT_DIR, exist_ok=True)
 # Reduce this if workers get OOM error or increase
 # if your machine has plenty of RAM and you want more parallelism
 RAM_PER_WORKER_MB: int = int(os.getenv("RAM_PER_WORKER_MB", "800"))
+
+# Server network settings
+# Port the uvicorn server listens on; override with SERVER_PORT env var
+SERVER_PORT: int = int(os.getenv("SERVER_PORT", "8080"))
+
+# When set to false (0/false/no), the server skips mounting the static UI
+# assets and the GET / route — useful for headless / API-only deployments
+SERVE_UI: bool = os.getenv("SERVE_UI", "true").lower() not in ("0", "false", "no")
+
+# Directory for per-run activity logs (<LOG_RUNS_DIR>/<run_id>.txt)
+LOG_RUNS_DIR: str = os.path.abspath(os.path.join(LOG_DIR, "runs"))
+os.makedirs(LOG_RUNS_DIR, exist_ok=True)

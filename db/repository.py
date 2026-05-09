@@ -26,12 +26,12 @@ import datetime
 import logging
 import sqlite3
 import threading
-from typing import Any
+from typing import Any, Optional
 
 logger = logging.getLogger(__name__)
 
 
-_SCHEMA_VERSION = 7
+_SCHEMA_VERSION = 11
 
 # Each value is a list of SQL statements for that migration step
 # Statements are executed individually so we can catch "already exists" errors
@@ -112,6 +112,10 @@ _MIGRATIONS: dict[int, list[str]] = {
     ],
     7: [
         "ALTER TABLE extracted_texts ADD COLUMN txt_hash TEXT",
+    ],
+    11: [
+        # Stores the absolute path to the per run activity log .txt file
+        "ALTER TABLE runs ADD COLUMN log_path TEXT",
     ],
 }
 
@@ -213,7 +217,7 @@ class DatabaseRepository:
 
                 for version in range(current + 1, _SCHEMA_VERSION + 1):
                     logger.info("Applying schema migration v%d …", version)
-                    for sql in _MIGRATIONS[version]:
+                    for sql in _MIGRATIONS.get(version, []):
                         _run_sql(conn, sql)
                     # Write version after all statements in this step succeed
                     conn.execute(f"PRAGMA user_version = {version}")
@@ -313,6 +317,31 @@ class DatabaseRepository:
             finally:
                 conn.close()
 
+    def save_run_log_path(self, run_id: str, log_path: str) -> None:
+        """Persist the absolute path to the per run activity log .txt file."""
+        with self._lock:
+            conn = self._connect()
+            try:
+                conn.execute(
+                    "UPDATE runs SET log_path = ? WHERE run_id = ?",
+                    (log_path, run_id),
+                )
+                conn.commit()
+            finally:
+                conn.close()
+
+    def get_run_log_path(self, run_id: str) -> str | None:
+        """Return the log_path for a run, or None if not yet written."""
+        with self._lock:
+            conn = self._connect()
+            try:
+                row = conn.execute(
+                    "SELECT log_path FROM runs WHERE run_id = ?", (run_id,)
+                ).fetchone()
+                return row[0] if row else None
+            finally:
+                conn.close()
+
     def get_runs(self, page: int = 1, size: int = 20) -> tuple[int, list[dict]]:
         """Paginated list of runs (newest first)"""
         offset = (max(page, 1) - 1) * size
@@ -324,7 +353,7 @@ class DatabaseRepository:
                     """
                     SELECT run_id, started_at, completed_at, status,
                            total_files, done_files, failed_files,
-                           direct_files, ocr_files, input_dir,
+                           direct_files, ocr_files, input_dir, log_path,
                            ROUND(
                                (JULIANDAY(completed_at) - JULIANDAY(started_at)) * 86400
                            ) AS elapsed_seconds
@@ -347,7 +376,7 @@ class DatabaseRepository:
                     """
                     SELECT run_id, started_at, completed_at, status,
                            total_files, done_files, failed_files,
-                           direct_files, ocr_files, input_dir,
+                           direct_files, ocr_files, input_dir, log_path,
                            ROUND(
                                (JULIANDAY(completed_at) - JULIANDAY(started_at)) * 86400
                            ) AS elapsed_seconds
@@ -554,28 +583,49 @@ class DatabaseRepository:
                 conn.close()
 
     def get_extracted_texts(
-        self, page: int = 1, size: int = 50
+        self,
+        page: int = 1,
+        size: int = 50,
+        run_id: Optional[str] = None,
+        rel_path_prefix: Optional[str] = None,
     ) -> tuple[int, list[dict[str, Any]]]:
-        """Return '(total_count, page_items)' ordered by most-recently processed"""
+        """Return '(total_count, page_items)' filtered by run_id or rel_path prefix."""
         offset = (max(page, 1) - 1) * size
+
+        where_clauses = []
+        params: list[Any] = []
+
+        if run_id:
+            where_clauses.append("e.run_id = ?")
+            params.append(run_id)
+        if rel_path_prefix:
+            # Matches directories: rel_path starts with prefix
+            where_clauses.append("e.rel_path LIKE ?")
+            params.append(f"{rel_path_prefix.rstrip('/')}/%")
+
+        where_sql = ""
+        if where_clauses:
+            where_sql = "WHERE " + " AND ".join(where_clauses)
+
         with self._lock:
             conn = self._connect()
             try:
                 total: int = conn.execute(
-                    "SELECT COUNT(*) FROM extracted_texts"
+                    f"SELECT COUNT(*) FROM extracted_texts e {where_sql}", params
                 ).fetchone()[0]
                 rows = conn.execute(
-                    """
+                    f"""
                     SELECT e.id, e.run_id, e.source_path, e.filename, e.rel_path,
                            e.txt_path, e.method, e.char_count, e.page_count,
                            e.content_hash, e.processed_at, e.confidence, e.flags,
                            r.started_at AS run_started_at
                     FROM extracted_texts e
                     LEFT JOIN runs r ON r.run_id = e.run_id
-                    ORDER BY e.processed_at DESC
+                    {where_sql}
+                    ORDER BY r.started_at DESC, r.run_id, e.processed_at DESC
                     LIMIT ? OFFSET ?
                     """,
-                    (size, offset),
+                    params + [size, offset],
                 ).fetchall()
                 return total, [dict(r) for r in rows]
             finally:

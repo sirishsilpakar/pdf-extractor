@@ -161,6 +161,7 @@ class JobManager:
         settings: Optional[dict] = None,
         ocr_engine=None,
         db=None,
+        timeout_seconds: int = 0,
     ) -> bool:
         """Start the pipeline in a background thread.
 
@@ -183,7 +184,15 @@ class JobManager:
 
         thread = threading.Thread(
             target=self._run,
-            args=(input_dir, output_dir, force, ocr_engine, db, run_id),
+            args=(
+                input_dir,
+                output_dir,
+                force,
+                ocr_engine,
+                db,
+                run_id,
+                timeout_seconds,
+            ),
             daemon=True,
         )
         thread.start()
@@ -194,7 +203,9 @@ class JobManager:
         with self._lock:
             if self._state.status == JobStatus.RUNNING:
                 self._state.status = JobStatus.CANCELLED
+                self._state.end_time = time.time()
         self._emit({"type": "state_update", **self.get_status()})
+        self._append_log("[INFO] Pipeline cancellation requested by user.")
 
     def get_status(self) -> dict:
         """Return compact metadata dict (does not include the files list)"""
@@ -352,9 +363,10 @@ class JobManager:
             return 0.0
         if self._state.status == JobStatus.RUNNING:
             return round(time.time() - self._state.start_time, 1)
-        if self._state.end_time:
-            return round(self._state.end_time - self._state.start_time, 1)
-        return 0.0
+
+        # Ensure we have a valid end_time otherwise fallback to current time
+        end = self._state.end_time if self._state.end_time is not None else time.time()
+        return round(end - self._state.start_time, 1)
 
     def _append_log(self, msg: str) -> None:
         """Append to log buffer then broadcast state mutation and side effect separated"""
@@ -381,6 +393,7 @@ class JobManager:
         ocr_engine,
         db,
         run_id: str = "",
+        timeout_seconds: int = 0,
     ) -> None:
         """Execute ``run_pipeline`` in a background daemon thread"""
         import logging as _logging
@@ -397,6 +410,7 @@ class JobManager:
                 ocr_engine=ocr_engine,
                 db=db,
                 run_id=run_id or None,
+                total_timeout_seconds=timeout_seconds,
             )
         except Exception as exc:
             _logging.exception("Pipeline thread crashed: %s", exc)
@@ -405,6 +419,34 @@ class JobManager:
                 self._state.status = JobStatus.DONE
                 self._state.end_time = time.time()
             self._emit({"type": "state_update", **self.get_status()})
+        finally:
+            # Always persist the in-memory log to disk so it survives server restarts
+            self._flush_run_log(run_id=run_id, db=db)
+
+    def _flush_run_log(self, run_id: str, db) -> None:
+        """Write all buffered log lines to logs/runs/<run_id>.txt and save path in DB."""
+        if not run_id:
+            return
+        try:
+            import os as _os
+
+            from config import LOG_RUNS_DIR
+
+            _os.makedirs(LOG_RUNS_DIR, exist_ok=True)
+            log_path = _os.path.join(LOG_RUNS_DIR, f"{run_id}.txt")
+
+            with self._lock:
+                lines = self._state.log.snapshot()
+
+            with open(log_path, "w", encoding="utf-8") as fh:
+                fh.write("\n".join(lines))
+
+            if db is not None and hasattr(db, "save_run_log_path"):
+                db.save_run_log_path(run_id, log_path)
+        except Exception as exc:
+            import logging as _logging
+
+            _logging.warning("Could not flush run log for %s: %s", run_id, exc)
 
 
 # Module-level singleton (used by server.py lifespan and deps.py)

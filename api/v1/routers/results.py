@@ -7,6 +7,7 @@ record deletion, and file download
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import FileResponse
@@ -27,8 +28,14 @@ async def list_results(
     db: DBDep = ...,  # type: ignore[assignment]
     page: int = Query(1, ge=1),
     size: int = Query(50, ge=1, le=200),
+    run_id: Optional[str] = Query(None, description="Filter by a specific run ID"),
+    folder: Optional[str] = Query(
+        None, description="Filter by relative path prefix (directory)"
+    ),
 ) -> PagedResponse[ResultRecord]:
-    total, rows = db.get_extracted_texts(page=page, size=size)
+    total, rows = db.get_extracted_texts(
+        page=page, size=size, run_id=run_id, rel_path_prefix=folder
+    )
     return PagedResponse.build(
         total=total,
         page=page,

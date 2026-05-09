@@ -1,8 +1,12 @@
 """Upload router POST /api/v1/upload
 
-Streams files to disk in fixed-size chunks so RAM usage stays constant
-regardless of file count or file size.  Computes SHA-256 of the first 64 KB
-as each file is written so the client immediately has a hash for dedup
+Two ingestion modes
+-------------------
+1. File upload ('POST /'): Stream PDF files from the client to the server's 'uploads/' directory. Works for remote or local clients.
+
+2. File reference ('POST /reference'): Register a local filesystem path (folder or single PDF) already on the server. No data is copied. Intended for desktop / local deployments where the backend and files share the same machine.
+
+Both modes return an ID that is passed in 'StartJobRequest.file_ids'.
 """
 
 from __future__ import annotations
@@ -14,8 +18,15 @@ from typing import List
 
 from fastapi import APIRouter, File, HTTPException, UploadFile
 
+from api.v1 import ref_registry
 from api.v1.deps import DBDep
-from api.v1.schemas import CheckHashesRequest, CheckHashesResponse, UploadedFileSchema
+from api.v1.schemas import (
+    CheckHashesRequest,
+    CheckHashesResponse,
+    FileReferenceResponse,
+    FileReferenceSchema,
+    UploadedFileSchema,
+)
 from config import UPLOAD_CHUNK_SIZE, UPLOAD_DIR
 from services.hasher import HASH_SAMPLE_BYTES
 
@@ -125,4 +136,93 @@ async def check_hashes(
     return CheckHashesResponse(
         already_processed=already,
         unprocessed=unprocessed,
+    )
+
+
+@router.post(
+    "/reference",
+    response_model=FileReferenceResponse,
+    summary="Register a local server-side path (no upload)",
+    description=(
+        "Register a folder or single PDF file that already exists on the "
+        "server's filesystem. No data is transferred, the pipeline will "
+        "read the files directly from the given path. "
+        "Returns a 'ref_id' that is passed in 'StartJobRequest.file_ids' "
+        "alongside regular upload file_ids. "
+        "Intended for desktop / local deployments where the backend and files "
+        "share the same machine."
+    ),
+)
+async def register_file_reference(
+    req: FileReferenceSchema,
+    db: DBDep = ...,  # type: ignore[assignment]
+) -> FileReferenceResponse:
+    resolved = Path(req.path).resolve()
+
+    if not resolved.exists():
+        raise HTTPException(
+            status_code=404,
+            detail=f"Path does not exist on the server: {req.path!r}",
+        )
+
+    if resolved.is_dir():
+        pdfs = [p for p in resolved.rglob("*") if p.suffix.lower() == ".pdf"]
+        is_folder = True
+    elif resolved.suffix.lower() == ".pdf":
+        pdfs = [resolved]
+        is_folder = False
+    else:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Path must be a directory or a .pdf file, got: {req.path!r}",
+        )
+
+    if not pdfs:
+        raise HTTPException(
+            status_code=400,
+            detail=f"No PDF files found under: {req.path!r}",
+        )
+
+    # Check for duplicates in the database via hash check
+    from api.v1.schemas import FileReferenceItem
+    from services.hasher import compute_file_hash
+
+    already_processed_count = 0
+    hashes = []
+    file_items = []
+
+    for pdf_path in pdfs:
+        h = ""
+        try:
+            # We only hash the first 64KB (HASH_SAMPLE_BYTES) as per our standard
+            h = compute_file_hash(str(pdf_path))
+            hashes.append(h)
+        except Exception as e:
+            print(f"DEBUG: Hashing failed for {pdf_path}: {e}")
+            # Continue without hash, but still add to list
+
+        file_items.append(
+            FileReferenceItem(
+                name=pdf_path.name,
+                size_bytes=pdf_path.stat().st_size if pdf_path.exists() else 0,
+                content_hash=h,
+                rel_path=(
+                    str(pdf_path.relative_to(resolved)) if is_folder else pdf_path.name
+                ),
+            )
+        )
+
+    if hashes:
+        existing = db.get_by_hashes(hashes)
+        already_processed_count = len(existing)
+
+    ref_id = ref_registry.register(str(resolved))
+
+    return FileReferenceResponse(
+        ref_id=ref_id,
+        resolved_path=str(resolved),
+        pdf_count=len(pdfs),
+        already_processed_count=already_processed_count,
+        is_folder=is_folder,
+        files=file_items,
     )

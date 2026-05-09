@@ -65,7 +65,11 @@ class CheckHashesResponse(BaseModel):
 
 class StartJobRequest(BaseModel):
     file_ids: List[str] = Field(
-        description="'file_id' values returned by the upload endpoint"
+        description="'file_id' values returned by the upload endpoint or registration"
+    )
+    selected_files: Optional[dict[str, List[str]]] = Field(
+        default=None,
+        description="Optional mapping of ref_id -> list of relative paths to process. If provided for a ref_id, only these files will be processed.",
     )
     output_dir: str = Field(default="extracted_files")
     force: bool = Field(
@@ -73,6 +77,10 @@ class StartJobRequest(BaseModel):
         description="Reprocess files that are already in the database",
     )
     settings: Optional[dict] = Field(default=None)
+    timeout_seconds: Optional[int] = Field(
+        default=None,
+        description="Optional global timeout for the entire job in seconds.",
+    )
 
     @field_validator("file_ids")
     @classmethod
@@ -145,6 +153,7 @@ class RunRecord(BaseModel):
         None  # computed server-side (completed_at - started_at)
     )
     input_dir: Optional[str] = None
+    log_path: Optional[str] = None  # absolute path to per-run activity log .txt
 
 
 class ExtractedFileRecord(BaseModel):
@@ -171,3 +180,43 @@ class SearchResponse(BaseModel):
     size: int
     pages: int
     results: List[SearchResultItem]
+
+
+class FileReferenceSchema(BaseModel):
+    """Request body for POST /api/v1/upload/reference.
+
+    Provides either a folder path (all PDFs inside are included recursively)
+    or a single PDF file path already accessible on the server's filesystem.
+    """
+
+    path: str = Field(
+        description=(
+            "Absolute or relative path on the server filesystem. "
+            "Folder: all PDFs inside are included recursively. "
+            "Single .pdf file: that file only."
+        )
+    )
+
+
+class FileReferenceItem(BaseModel):
+    name: str
+    size_bytes: int
+    content_hash: str
+    rel_path: str
+
+
+class FileReferenceResponse(BaseModel):
+    """Returned after a successful local file reference registration."""
+
+    ref_id: str = Field(description="ID to pass in StartJobRequest.file_ids")
+    resolved_path: str = Field(description="Absolute path as resolved on the server")
+    pdf_count: int = Field(description="Number of PDF files found under the path")
+    already_processed_count: int = Field(
+        default=0,
+        description="Number of PDFs that have already been extracted (based on hash check)",
+    )
+    is_folder: bool = Field(description="True when path is a directory")
+    files: List[FileReferenceItem] = Field(
+        default_factory=list,
+        description="Detailed list of individual PDF files found under the path",
+    )
