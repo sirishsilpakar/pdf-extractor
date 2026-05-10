@@ -53,11 +53,17 @@ async def start_job(
 ) -> dict:
     jm: JobManager
 
-    # Collect PDFs (supports both upload IDs and server local reference IDs)
+    # Collect PDFs (supports upload IDs, reference IDs, and batch IDs)
     entries: List[FileEntry] = []
     missing: List[str] = []
-    # Track which entries came from references
+    # Track which entries came from references (processed in place, no hard link)
     ref_entries: List[FileEntry] = []
+    # If partial files are picked, or it's a single file input, must use a manifest dir
+    # to ensure pipeline iterates only targeted items and handles files correctly
+    has_partial_selection = False
+
+    if not req.any_ids():
+        raise HTTPException(400, detail="Provide at least one file_id or batch_id.")
 
     for fid in req.file_ids:
         # Try as an uploaded file directory
@@ -90,6 +96,7 @@ async def start_job(
                 # Filter by selected files if provided for this ref_id
                 selected = (req.selected_files or {}).get(fid)
                 if selected:
+                    has_partial_selection = True
                     pdfs = [ref_path / f for f in selected if (ref_path / f).exists()]
                 else:
                     # Recursive search as before (case-insensitive)
@@ -111,7 +118,8 @@ async def start_job(
                     entries.append(entry)
                     ref_entries.append(entry)
             else:
-                # Single PDF file reference
+                # Single PDF file reference --> Force manifest directory packaging
+                has_partial_selection = True
                 entry = FileEntry(
                     name=ref_path.name,
                     path=str(ref_path),
@@ -125,14 +133,45 @@ async def start_job(
         # Neither uploaded nor registered
         missing.append(fid)
 
-    # Missing file_ids are skippedwhen other IDs resolved successfully
+    # Resolve batch_ids, look up the pre-scanned folder path from DB
+    for bid in req.batch_ids:
+        resolved_path_str = db.get_batch_resolved_path(bid)
+        if resolved_path_str is None:
+            missing.append(bid)
+            continue
+        ref_path = Path(resolved_path_str)
+        if not ref_path.exists():
+            missing.append(bid)
+            continue
+        if ref_path.is_dir():
+            pdfs = [p for p in ref_path.rglob("*") if p.suffix.lower() == ".pdf"]
+        else:
+            # Single file batch --> Force manifest directory packaging to feed pipeline correctly
+            has_partial_selection = True
+            pdfs = [ref_path] if ref_path.suffix.lower() == ".pdf" else []
+        if not pdfs:
+            missing.append(bid)
+            continue
+        for pdf in pdfs:
+            entry = FileEntry(
+                name=pdf.name,
+                path=str(pdf),
+                size_bytes=pdf.stat().st_size if pdf.exists() else 0,
+                upload_rel=(
+                    str(pdf.relative_to(ref_path)) if ref_path.is_dir() else pdf.name
+                ),
+            )
+            entries.append(entry)
+            ref_entries.append(entry)
+
+    # Missing IDs are only a hard error when nothing resolved
     if missing and not entries:
         raise HTTPException(
             400,
-            detail=f"No PDFs found for any of the {len(missing)} file ID(s).",
+            detail=f"No PDFs found for any of the {len(missing)} ID(s): {missing[:5]}",
         )
     if not entries:
-        raise HTTPException(400, detail="No PDFs found in the provided file IDs.")
+        raise HTTPException(400, detail="No PDFs found in the provided IDs.")
 
     # Build a manifest directory for uploaded files with hard links
     # Reference entries are excluded as the pipeline reads them in-place
@@ -145,8 +184,10 @@ async def start_job(
     # build a manifest directory and symlink everything into it
     manifest_dir: Path | None = None
 
-    if upload_entries or (
-        ref_entries and len({Path(e.path).parent for e in ref_entries}) > 1
+    if (
+        upload_entries
+        or has_partial_selection
+        or (ref_entries and len({Path(e.path).parent for e in ref_entries}) > 1)
     ):
         # Need a unified manifest directory
         manifest_dir = UPLOAD_DIR / f"manifest_{uuid.uuid4().hex[:8]}"
@@ -188,8 +229,13 @@ async def start_job(
         single_ref_root = str(Path(ref_entries[0].path).parent)
         # If it's a single file ref, the root is just that file's parent
         # For folder refs, reconstruct the original registered root
-        ref_id_for_single = req.file_ids[0]  # only one ref_id in this branch
-        registered_root = ref_registry.lookup(ref_id_for_single)
+        registered_root = None
+        if req.file_ids:
+            ref_id_for_single = req.file_ids[0]
+            registered_root = ref_registry.lookup(ref_id_for_single)
+        elif req.batch_ids:
+            registered_root = db.get_batch_resolved_path(req.batch_ids[0])
+
         input_dir = registered_root if registered_root else single_ref_root
 
     else:
@@ -221,6 +267,7 @@ async def start_job(
         ocr_engine=ocr,
         db=db,
         timeout_seconds=timeout_seconds,
+        batch_ids=req.batch_ids,
     )
 
     if not started:

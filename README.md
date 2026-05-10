@@ -31,6 +31,8 @@
 | **Versioned REST API** | All endpoints under `/api/v1/` with full OpenAPI docs at `/docs` |
 | **Real-time SSE** | Compact metadata-only events, file list fetched separately via pagination |
 | **Thread-safe SQLite** | Repository pattern with WAL mode and non-destructive schema migration |
+| **Local Batch Ingestion** | Register server-side paths for asynchronous background audit and processing |
+| **Execution Auditing** | Dedicated Runs ledger documenting total audit history and file extraction provenance |
 
 ---
 
@@ -168,7 +170,10 @@ Interactive docs always available at **`/docs`** (Swagger) and **`/redoc`** (ReD
 |---|---|---|
 | `POST` | `/api/v1/upload` | Stream upload one or more PDFs (chunked, 1 MB/chunk) |
 | `POST` | `/api/v1/upload/check-hashes` | Bulk hash check to see which files are already extracted |
-| `POST` | `/api/v1/job/start` | Start the extraction pipeline for uploaded file IDs |
+| `POST` | `/api/v1/batches` | Register a server-side path as a batch (async audit scan) |
+| `GET`  | `/api/v1/batches/{id}` | Details for a single batch registration |
+| `GET`  | `/api/v1/batches/{id}/files` | Paginated file enumeration inside a batch |
+| `POST` | `/api/v1/job/start` | Start extraction pipeline for uploaded file or batch IDs |
 | `POST` | `/api/v1/job/cancel` | Cancel the running job |
 | `GET`  | `/api/v1/job/status` | Compact job metadata (no files list) |
 | `GET`  | `/api/v1/job/files?page=1&size=50` | Paginated active job file list |
@@ -178,7 +183,11 @@ Interactive docs always available at **`/docs`** (Swagger) and **`/redoc`** (ReD
 | `GET`  | `/api/v1/files?page=1&size=50` | Paginated on disk `.txt` file listing |
 | `DELETE` | `/api/v1/files/{rel_path}` | Delete a `.txt` output file from disk |
 | `GET`  | `/api/v1/search?q=term&page=1&size=20` | Full text search across extracted documents |
-| `GET`  | `/api/events` | SSE stream for real-time progress |
+| `GET`  | `/api/v1/runs?page=1&size=20` | Paginated list of historic pipeline execution runs |
+| `GET`  | `/api/v1/runs/{id}/files` | Enumerate file list specifically bound to a run |
+| `GET`  | `/api/v1/runs/{id}/log` | Fetch the full verbatim plaintext execution log for a run |
+| `GET`  | `/api/events` | SSE stream for real-time extraction job progress |
+| `GET`  | `/api/events/batch` | SSE stream for background batch directory scan updates |
 
 ### Upload flow
 
@@ -252,7 +261,9 @@ pdf-extractor/
 │       ├── router.py        # Versioned router aggregator
 │       └── routers/
 │           ├── upload.py    # POST /upload, POST /check-hashes
+│           ├── batches.py   # POST /batches, GET /batches/{id}/files
 │           ├── jobs.py      # start / cancel / status / files
+│           ├── runs.py      # Paginated runs ledger & historic logs
 │           ├── results.py   # Paginated DB results
 │           ├── files.py     # Paginated on-disk .txt listing
 │           └── search.py    # Full-text search
@@ -334,7 +345,7 @@ pytest tests/api/ -v
 pytest tests/ -v
 ```
 
-Current coverage: **30 tests, 0 failures**.
+Current coverage: **56 tests, 0 failures**.
 
 ---
 

@@ -60,8 +60,9 @@ def create_app() -> FastAPI:
     # Versioned REST routes
     app.include_router(v1_router, prefix="/api")
 
-    # SSE stream
+    # SSE streams
     app.add_api_route("/api/events", _sse_endpoint, tags=["Events"])
+    app.add_api_route("/api/events/batch", _batch_sse_endpoint, tags=["Events"])
 
     # Static UI only mounted when SERVE_UI is True (default)
     # Pass --no-ui or set SERVE_UI=false to run in headless / API-only mode
@@ -105,6 +106,64 @@ async def _sse_endpoint(request: Request):
                     yield ": keepalive\n\n"
         finally:
             sse.unsubscribe(q)
+
+    return StreamingResponse(
+        generate(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+            "Connection": "keep-alive",
+        },
+    )
+
+
+async def _batch_sse_endpoint(request: Request):
+    """SSE stream for batch scan progress only.
+
+    Opens when a folder/file path is registered and closes when all batches
+    reach scan_status='done'. Job execution events go to GET /api/events.
+    """
+    import asyncio
+
+    from api import sse
+
+    q = await sse.batch_subscribe()
+
+    from config import DB_PATH
+    from db.repository import DatabaseRepository
+
+    db = DatabaseRepository(DB_PATH)
+
+    async def generate():
+        # Deliver initial state immediately
+        try:
+            recent = db.get_recent_batches(limit=1)
+            for b in recent:
+                init_ev = {
+                    "type": "batch_scan_update",
+                    "batch_id": b["batch_id"],
+                    "scan_status": b["scan_status"],
+                    "pdf_count": b["pdf_count"] or 0,
+                    "files_scanned": b["pdf_count"] or 0,
+                    "already_processed_count": b.get("already_processed_count"),
+                    "error_message": b.get("error_message"),
+                }
+                yield f"data: {json.dumps(init_ev)}\n\n"
+        except Exception:
+            pass  # survive DB failure to stream live events anyway
+
+        try:
+            while True:
+                if await request.is_disconnected():
+                    break
+                try:
+                    event = await asyncio.wait_for(q.get(), timeout=25)
+                    yield f"data: {json.dumps(event)}\n\n"
+                except asyncio.TimeoutError:
+                    yield ": keepalive\n\n"
+        finally:
+            sse.batch_unsubscribe(q)
 
     return StreamingResponse(
         generate(),

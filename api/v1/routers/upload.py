@@ -11,7 +11,6 @@ Both modes return an ID that is passed in 'StartJobRequest.file_ids'.
 
 from __future__ import annotations
 
-import hashlib
 import uuid
 from pathlib import Path
 from typing import List
@@ -28,7 +27,7 @@ from api.v1.schemas import (
     UploadedFileSchema,
 )
 from config import UPLOAD_CHUNK_SIZE, UPLOAD_DIR
-from services.hasher import HASH_SAMPLE_BYTES
+from services.hasher import compute_file_hash
 
 router = APIRouter()
 
@@ -38,28 +37,18 @@ router = APIRouter()
 # ---------------------------------------------------------------------------
 
 
-async def _stream_to_disk(upload: UploadFile, dest: Path) -> str:
-    """Write upload to dest in chunks; return SHA-256 of first 64 KB.
+async def _stream_to_disk(upload: UploadFile, dest: Path) -> None:
+    """Write upload to dest in chunks.
 
-    Peak memory per file: 'UPLOAD_CHUNK_SIZE' (default 1 MB), not the
-    entire file
+    Peak memory per file: 'UPLOAD_CHUNK_SIZE' (default 1 MB).
     """
     dest.parent.mkdir(parents=True, exist_ok=True)
-    h = hashlib.sha256()
-    sampled = 0
-
     with open(dest, "wb") as out:
         while True:
             chunk = await upload.read(UPLOAD_CHUNK_SIZE)
             if not chunk:
                 break
             out.write(chunk)
-            if sampled < HASH_SAMPLE_BYTES:
-                take = min(len(chunk), HASH_SAMPLE_BYTES - sampled)
-                h.update(chunk[:take])
-                sampled += take
-
-    return h.hexdigest()
 
 
 def _validate_pdf(filename: str | None) -> None:
@@ -101,8 +90,15 @@ async def upload_pdfs(
         safe_rel = Path(upload.filename).as_posix().lstrip("/").lstrip("../")
         dest = UPLOAD_DIR / file_id / safe_rel
 
-        content_hash = await _stream_to_disk(upload, dest)
+        # Stream write to local disk
+        await _stream_to_disk(upload, dest)
         size_bytes = dest.stat().st_size
+
+        # Compute standard pipeline hash (consistent head+tail sampled hashing)
+        content_hash = compute_file_hash(dest)
+
+        # Check if the file hash is already in the extraction database
+        already_processed = bool(db.get_by_hashes([content_hash]))
 
         results.append(
             UploadedFileSchema(
@@ -110,6 +106,7 @@ async def upload_pdfs(
                 name=Path(upload.filename).name,
                 size_bytes=size_bytes,
                 content_hash=content_hash,
+                is_already_processed=already_processed,
             )
         )
 

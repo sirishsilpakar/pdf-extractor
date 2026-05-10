@@ -43,6 +43,10 @@ class UploadedFileSchema(BaseModel):
     name: str = Field(description="Original filename (basename only)")
     size_bytes: int = Field(description="File size in bytes")
     content_hash: str = Field(description="SHA-256 of first 64 KB use for dedup check")
+    is_already_processed: bool = Field(
+        default=False,
+        description="True if a file with this hash is already in the extraction database",
+    )
 
 
 class CheckHashesRequest(BaseModel):
@@ -65,7 +69,12 @@ class CheckHashesResponse(BaseModel):
 
 class StartJobRequest(BaseModel):
     file_ids: List[str] = Field(
-        description="'file_id' values returned by the upload endpoint or registration"
+        default_factory=list,
+        description="'file_id' values returned by POST /upload or POST /upload/reference",
+    )
+    batch_ids: List[str] = Field(
+        default_factory=list,
+        description="'batch_id' values returned by POST /batches (server side path scan)",
     )
     selected_files: Optional[dict[str, List[str]]] = Field(
         default=None,
@@ -82,12 +91,15 @@ class StartJobRequest(BaseModel):
         description="Optional global timeout for the entire job in seconds.",
     )
 
-    @field_validator("file_ids")
+    @field_validator("file_ids", "batch_ids", mode="before")
     @classmethod
-    def must_not_be_empty(cls, v: list) -> list:
-        if not v:
-            raise ValueError("file_ids must not be empty")
-        return v
+    def coerce_none_to_list(cls, v: object) -> list:
+        """Treat explicit null as empty list for both ID fields."""
+        return v if v is not None else []
+
+    def any_ids(self) -> bool:
+        """True if at least one file_id or batch_id was supplied."""
+        return bool(self.file_ids or self.batch_ids)
 
 
 class JobStatusResponse(BaseModel):

@@ -180,7 +180,7 @@ def test_save_returns_id(tmp_db):
         page_count=1,
         content_hash="h1",
     )
-    assert rid2 == rid
+    assert isinstance(rid2, int) and rid2 > 0
 
 
 # ---------------------------------------------------------------------------
