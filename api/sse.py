@@ -64,3 +64,42 @@ def broadcast(event: dict) -> None:
     if _loop is None or not _clients:
         return
     asyncio.run_coroutine_threadsafe(broadcast_async(event), _loop)
+
+
+# Batch scan channel (separate from the job execution channel above)
+_batch_clients: Set[Queue] = set()
+
+
+async def batch_subscribe() -> Queue:
+    """Register a new SSE client for batch scan events only."""
+    q: Queue = Queue(maxsize=256)
+    _batch_clients.add(q)
+    logger.info("Batch SSE client connected. Active: %d", len(_batch_clients))
+    return q
+
+
+def batch_unsubscribe(q: Queue) -> None:
+    """Remove a batch scan SSE client."""
+    _batch_clients.discard(q)
+    logger.info("Batch SSE client disconnected. Active: %d", len(_batch_clients))
+
+
+async def broadcast_batch_async(event: dict) -> None:
+    """Push batch event to every connected batch scan client."""
+    dead: Set[Queue] = set()
+    for q in list(_batch_clients):
+        try:
+            q.put_nowait(event)
+        except asyncio.QueueFull:
+            dead.add(q)
+    _batch_clients.difference_update(dead)
+
+
+def broadcast_batch(event: dict) -> None:
+    """Thread-safe entry point called from the scan task (ThreadPoolExecutor).
+
+    Uses the same asyncio event-loop scheduling as broadcast().
+    """
+    if _loop is None or not _batch_clients:
+        return
+    asyncio.run_coroutine_threadsafe(broadcast_batch_async(event), _loop)

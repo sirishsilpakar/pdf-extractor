@@ -87,8 +87,15 @@ class _JobState:
     ocr_count: int = 0
     current_file: str = ""
     run_id: str = ""
+    batch_ids: list[str] = field(default_factory=list)
+    error_message: Optional[str] = None
 
-    def reset(self, entries: list[FileEntry], run_id: str = "") -> None:
+    def reset(
+        self,
+        entries: list[FileEntry],
+        run_id: str = "",
+        batch_ids: Optional[list[str]] = None,
+    ) -> None:
         self.status = JobStatus.RUNNING
         self._files_by_name = {e.name: e for e in entries}
         self._files_by_path = {e.path: e for e in entries}
@@ -102,6 +109,8 @@ class _JobState:
         self.ocr_count = 0
         self.current_file = ""
         self.run_id = run_id
+        self.batch_ids = batch_ids or []
+        self.error_message = None
 
     def find_by_name(self, name: str) -> Optional[FileEntry]:
         return self._files_by_name.get(name)
@@ -162,6 +171,7 @@ class JobManager:
         ocr_engine=None,
         db=None,
         timeout_seconds: int = 0,
+        batch_ids: Optional[list[str]] = None,
     ) -> bool:
         """Start the pipeline in a background thread.
 
@@ -175,7 +185,7 @@ class JobManager:
             if self._state.status == JobStatus.RUNNING:
                 return False
             self._cancel.clear()
-            self._state.reset(file_entries, run_id=run_id)
+            self._state.reset(file_entries, run_id=run_id, batch_ids=batch_ids)
 
         if settings:
             self._append_log(f"[INFO] Settings received: {settings}")
@@ -233,6 +243,8 @@ class JobManager:
                 "elapsed": elapsed,
                 "eta_seconds": eta,
                 "current_file": self._state.current_file,
+                "batch_ids": self._state.batch_ids,
+                "error_message": self._state.error_message,
                 "log": self._state.log.snapshot(),
             }
 
@@ -270,6 +282,18 @@ class JobManager:
             self._state.current_file = basename
 
         self._append_log(f"[INFO] Worker {pid} → {basename}")
+
+        # Use for immediate row update (for UI) without requiring full state refetch
+        self._emit(
+            {
+                "type": "file_progress",
+                "file": basename,
+                "pct": 0,
+                "page": 0,
+                "total_pages": 0,
+                "status": "processing",
+            }
+        )
         self._emit({"type": "state_update", **self.get_status()})
 
     def _on_page_done(self, event: dict) -> None:
@@ -325,6 +349,7 @@ class JobManager:
 
             self._state.done_count = event.get("done", self._state.done_count)
             self._state.current_file = ""
+            final_status = entry.status.value if entry else FileStatus.COMPLETED.value
 
             if etype in ("file_failed", "file_timeout"):
                 self._state.failed_count += 1
@@ -333,6 +358,14 @@ class JobManager:
             else:
                 self._state.direct_count += 1
 
+        self._emit(
+            {
+                "type": "file_progress",
+                "file": os.path.basename(file_path),
+                "pct": 100,
+                "status": final_status,
+            }
+        )
         self._emit({"type": "state_update", **self.get_status()})
 
     def _on_pipeline_done(self, event: dict) -> None:
@@ -417,6 +450,7 @@ class JobManager:
             self._append_log(f"[ERROR] Pipeline crashed: {exc}")
             with self._lock:
                 self._state.status = JobStatus.DONE
+                self._state.error_message = str(exc)
                 self._state.end_time = time.time()
             self._emit({"type": "state_update", **self.get_status()})
         finally:
