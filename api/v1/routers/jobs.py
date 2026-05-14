@@ -266,6 +266,35 @@ async def start_job(
         else GLOBAL_JOB_TIMEOUT_SECONDS
     )
 
+    # Compute skip_count so the job manager can report accurate progress via SSE
+    # This mirrors the exact deduplication logic inside pipeline.run_pipeline():
+    # files whose content hash are already present in extracted_texts will be skipped by the pipeline
+    # count them here and pass it to jm.start_job() so total_count = queued files
+    skip_count = 0
+    if not req.force and db is not None:
+        try:
+            processed_hashes = db.get_processed_hashes()
+            processed_filenames = db.get_processed_filenames()
+
+            from services.hasher import compute_file_hash
+
+            for entry in entries:
+                try:
+                    h = compute_file_hash(entry.path)
+                    if h in processed_hashes:
+                        skip_count += 1
+                        entry.is_processed = True
+                        continue
+                except Exception:
+                    pass
+                if entry.name in processed_filenames:
+                    skip_count += 1
+                    entry.is_processed = True
+        except Exception:
+            # If we can't compute skip_count the total will be
+            # slightly over-reported but processing will still work correctly
+            skip_count = 0
+
     started = jm.start_job(
         file_entries=entries,
         input_dir=input_dir,
@@ -276,12 +305,13 @@ async def start_job(
         db=db,
         timeout_seconds=timeout_seconds,
         batch_ids=batch_ids,
+        skip_count=skip_count,
     )
 
     if not started:
         raise HTTPException(409, detail="A job is already running.")
 
-    resp: dict = {"ok": True, "total": len(entries)}
+    resp: dict = {"ok": True, "total": len(entries) - skip_count, "skipped": skip_count}
     if missing:
         resp["warnings"] = (
             f"{len(missing)} file ID(s) not found on disk "
@@ -322,9 +352,17 @@ async def list_job_files(
     jm: JobManagerDep = ...,  # type: ignore[assignment]
     page: int = Query(1, ge=1, description="1-indexed page number"),
     size: int = Query(50, ge=1, le=200, description="Items per page"),
+    skip_processed: bool = Query(
+        False,
+        description=(
+            "When true, only return files that have not yet been extracted. "
+            "Use this after the user chooses to skip already-processed files "
+            "so that the UI reflects the actual set queued for processing."
+        ),
+    ),
 ) -> PagedResponse[FileEntryResponse]:
     jm: JobManager
-    total, items = jm.get_files_page(page, size)
+    total, items = jm.get_files_page(page, size, skip_processed)
     return PagedResponse.build(
         total=total,
         page=page,

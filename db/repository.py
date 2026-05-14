@@ -1142,26 +1142,54 @@ class DatabaseRepository:
                 conn.close()
 
     def get_batch_files(
-        self, batch_id: str, page: int, size: int
+        self,
+        batch_id: str,
+        page: int,
+        size: int,
+        filters: dict | None = None,
     ) -> tuple[int, list[dict]]:
-        """Return (total_count, page_rows) for a batch's file list."""
+        """Return (total_count, page_rows) for a batch's file list.
+
+        Args:
+            filters: Optional dict for column-level filtering.
+                Supported keys:
+                  'is_processed' (bool) - True: only processed files,
+                                            False: only unprocessed files.
+                Extensible for future keys (e.g. name prefix, size range).
+        """
         offset = (page - 1) * size
+
+        # Build extra WHERE clauses applied on top of the subquery
+        having_clauses: list[str] = []
+        if filters:
+            if "is_processed" in filters:
+                val = 1 if filters["is_processed"] else 0
+                having_clauses.append(f"is_processed = {val}")
+
+        having_sql = ("WHERE " + " AND ".join(having_clauses)) if having_clauses else ""
+
+        base_query = """
+            SELECT bf.batch_id, bf.name, bf.rel_path, bf.size_bytes, bf.content_hash,
+                   CASE WHEN et.content_hash IS NOT NULL THEN 1 ELSE 0 END AS is_processed
+              FROM batch_files bf
+              LEFT JOIN (SELECT DISTINCT content_hash FROM extracted_texts) et
+                ON bf.content_hash = et.content_hash
+             WHERE bf.batch_id = ?
+        """
+
         with self._lock:
             conn = self._connect()
             try:
                 total = conn.execute(
-                    "SELECT COUNT(*) FROM batch_files WHERE batch_id=?", (batch_id,)
+                    f"SELECT COUNT(*) FROM ({base_query}) sub {having_sql}",
+                    (batch_id,),
                 ).fetchone()[0]
                 rows = conn.execute(
-                    """
-                    SELECT bf.name, bf.rel_path, bf.size_bytes, bf.content_hash,
-                           CASE WHEN et.content_hash IS NOT NULL THEN 1 ELSE 0 END as is_processed
-                      FROM batch_files bf
-                      LEFT JOIN (SELECT DISTINCT content_hash FROM extracted_texts) et
-                        ON bf.content_hash = et.content_hash
-                     WHERE bf.batch_id=?
-                     ORDER BY bf.rel_path
-                     LIMIT ? OFFSET ?
+                    f"""
+                    SELECT * FROM ({base_query}) sub
+                    {having_sql}
+                    ORDER BY rel_path
+                    LIMIT ? OFFSET ?
                     """,
                     (batch_id, size, offset),
                 ).fetchall()

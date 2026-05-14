@@ -136,6 +136,7 @@ class FileEntryResponse(BaseModel):
     message: str
     current_page: int
     total_pages: int
+    is_processed: bool = Field(default=False)
 
 
 class ResultRecord(BaseModel):
