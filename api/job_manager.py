@@ -35,6 +35,7 @@ class FileEntry:
     current_page: int = 0
     total_pages: int = 0
     upload_rel: str = ""
+    is_processed: bool = False
 
     def to_dict(self) -> dict:
         return {
@@ -49,6 +50,7 @@ class FileEntry:
             "message": self.message,
             "current_page": self.current_page,
             "total_pages": self.total_pages,
+            "is_processed": self.is_processed,
         }
 
 
@@ -95,6 +97,7 @@ class _JobState:
         entries: list[FileEntry],
         run_id: str = "",
         batch_ids: Optional[list[str]] = None,
+        skip_count: int = 0,
     ) -> None:
         self.status = JobStatus.RUNNING
         self._files_by_name = {e.name: e for e in entries}
@@ -103,7 +106,9 @@ class _JobState:
         self.start_time = time.time()
         self.end_time = None
         self.done_count = 0
-        self.total_count = len(entries)
+        # Subtract files that will be skipped by the pipeline
+        # so that progress reporting reflects only the files actually queued for work
+        self.total_count = max(0, len(entries) - skip_count)
         self.failed_count = 0
         self.direct_count = 0
         self.ocr_count = 0
@@ -126,8 +131,12 @@ class _JobState:
     def all_entries(self) -> list[FileEntry]:
         return list(self._files_by_name.values())
 
-    def entries_page(self, page: int, size: int) -> tuple[int, list[FileEntry]]:
+    def entries_page(
+        self, page: int, size: int, skip_processed: bool = False
+    ) -> tuple[int, list[FileEntry]]:
         all_e = self.all_entries()
+        if skip_processed:
+            all_e = [e for e in all_e if not e.is_processed]
         total = len(all_e)
         offset = (max(page, 1) - 1) * size
         return total, all_e[offset : offset + size]
@@ -172,6 +181,7 @@ class JobManager:
         db=None,
         timeout_seconds: int = 0,
         batch_ids: Optional[list[str]] = None,
+        skip_count: int = 0,
     ) -> bool:
         """Start the pipeline in a background thread.
 
@@ -185,7 +195,12 @@ class JobManager:
             if self._state.status == JobStatus.RUNNING:
                 return False
             self._cancel.clear()
-            self._state.reset(file_entries, run_id=run_id, batch_ids=batch_ids)
+            self._state.reset(
+                file_entries,
+                run_id=run_id,
+                batch_ids=batch_ids,
+                skip_count=skip_count,
+            )
 
         if settings:
             self._append_log(f"[INFO] Settings received: {settings}")
@@ -248,10 +263,12 @@ class JobManager:
                 "log": self._state.log.snapshot(),
             }
 
-    def get_files_page(self, page: int = 1, size: int = 50) -> tuple[int, list[dict]]:
+    def get_files_page(
+        self, page: int = 1, size: int = 50, skip_processed: bool = False
+    ) -> tuple[int, list[dict]]:
         """Returns the file pages as (total, [file_entry_dict, ...])"""
         with self._lock:
-            total, entries = self._state.entries_page(page, size)
+            total, entries = self._state.entries_page(page, size, skip_processed)
         return total, [e.to_dict() for e in entries]
 
     def handle_event(self, event: dict) -> None:

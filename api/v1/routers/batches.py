@@ -51,6 +51,7 @@ class BatchResponse(BaseModel):
 
 
 class BatchFileItem(BaseModel):
+    batch_id: str
     name: str
     rel_path: str
     size_bytes: int
@@ -158,15 +159,26 @@ async def list_batch_files(
     db: DBDep = ...,  # type: ignore[assignment]
     page: int = Query(1, ge=1),  # noqa: B008
     size: int = Query(50, ge=1, le=500),  # noqa: B008
+    skip_processed: bool = Query(  # noqa: B008
+        False,
+        description=(
+            "When true, only return files that have not yet been extracted. "
+            "Use this after the user chooses to skip already-processed files "
+            "so that the UI reflects the actual set queued for processing."
+        ),
+    ),
 ) -> PagedResponse:
     batch = db.get_batch(batch_id)
     if batch is None:
         raise HTTPException(status_code=404, detail=f"Batch not found: {batch_id!r}")
 
-    total, rows = db.get_batch_files(batch_id, page, size)
+    # Translate the API level boolean into the repository's generalised filter dict
+    filters = {"is_processed": False} if skip_processed else None
+    total, rows = db.get_batch_files(batch_id, page, size, filters=filters)
 
     items = [
         BatchFileItem(
+            batch_id=r["batch_id"],
             name=r["name"],
             rel_path=r["rel_path"],
             size_bytes=r["size_bytes"],
