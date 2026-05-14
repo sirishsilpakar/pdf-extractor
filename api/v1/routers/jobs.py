@@ -62,8 +62,16 @@ async def start_job(
     # to ensure pipeline iterates only targeted items and handles files correctly
     has_partial_selection = False
 
+    if req.batch_ids:
+        raise HTTPException(
+            status_code=400,
+            detail="'batch_ids' is not currently supported, use 'batch_id'.",
+        )
+
     if not req.any_ids():
         raise HTTPException(400, detail="Provide at least one file_id or batch_id.")
+
+    batch_ids = [req.batch_id] if req.batch_id else []
 
     for fid in req.file_ids:
         # Try as an uploaded file directory
@@ -134,7 +142,7 @@ async def start_job(
         missing.append(fid)
 
     # Resolve batch_ids, look up the pre-scanned folder path from DB
-    for bid in req.batch_ids:
+    for bid in batch_ids:
         resolved_path_str = db.get_batch_resolved_path(bid)
         if resolved_path_str is None:
             missing.append(bid)
@@ -233,8 +241,8 @@ async def start_job(
         if req.file_ids:
             ref_id_for_single = req.file_ids[0]
             registered_root = ref_registry.lookup(ref_id_for_single)
-        elif req.batch_ids:
-            registered_root = db.get_batch_resolved_path(req.batch_ids[0])
+        elif batch_ids:
+            registered_root = db.get_batch_resolved_path(batch_ids[0])
 
         input_dir = registered_root if registered_root else single_ref_root
 
@@ -296,7 +304,7 @@ async def start_job(
         ocr_engine=ocr,
         db=db,
         timeout_seconds=timeout_seconds,
-        batch_ids=req.batch_ids,
+        batch_ids=batch_ids,
         skip_count=skip_count,
     )
 

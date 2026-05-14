@@ -72,9 +72,13 @@ class StartJobRequest(BaseModel):
         default_factory=list,
         description="'file_id' values returned by POST /upload or POST /upload/reference",
     )
+    batch_id: Optional[str] = Field(
+        default=None,
+        description="'batch_id' value returned by POST /batches (server side path scan)",
+    )
     batch_ids: List[str] = Field(
         default_factory=list,
-        description="'batch_id' values returned by POST /batches (server side path scan)",
+        description="Currently disabled. Reserved for future multi batch support",
     )
     selected_files: Optional[dict[str, List[str]]] = Field(
         default=None,
@@ -93,13 +97,17 @@ class StartJobRequest(BaseModel):
 
     @field_validator("file_ids", "batch_ids", mode="before")
     @classmethod
-    def coerce_none_to_list(cls, v: object) -> list:
-        """Treat explicit null as empty list for both ID fields."""
-        return v if v is not None else []
+    def normalise_ids(cls, v: object) -> list:
+        """Normalise both ID fields to return a list if None or str."""
+        if v is None:
+            return []
+        if isinstance(v, str):
+            return [v]
+        return v
 
     def any_ids(self) -> bool:
         """True if at least one file_id or batch_id was supplied."""
-        return bool(self.file_ids or self.batch_ids)
+        return bool(self.file_ids or self.batch_ids or self.batch_id)
 
 
 class JobStatusResponse(BaseModel):
