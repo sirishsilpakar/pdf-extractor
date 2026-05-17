@@ -11,9 +11,12 @@ CLI flags
 from __future__ import annotations
 
 import argparse
+import multiprocessing
 import os
 import sys
 from pathlib import Path
+
+import uvicorn
 
 # Ensure project root is on sys.path when run as a script
 sys.path.insert(0, str(Path(__file__).parent))
@@ -53,8 +56,6 @@ def start() -> None:
     mode = "headless (API only)" if not SERVE_UI else "full (UI + API)"
     print(f"[server] Starting in {mode} mode on port {port}")
 
-    import uvicorn  # noqa: E402
-
     from api.app import create_app  # noqa: E402
 
     application = create_app()
@@ -62,10 +63,11 @@ def start() -> None:
         application,
         host="0.0.0.0",
         port=port,
-        reload=False,
         log_level="info",
     )
 
 
 if __name__ == "__main__":
+    # Needs to be called at the very start for PyInstaller frozen applications
+    multiprocessing.freeze_support()
     start()
