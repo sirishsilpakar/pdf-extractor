@@ -10,9 +10,14 @@
 #   test:unit   — core/, db/, services/
 #   test:api    — api/ integration tests
 #
+# Build jobs (stage 3, run after tests pass — main/tags only):
+#   build:linux   — compiles Linux binary via PyInstaller, uploads to Package Registry
+#   build:windows — compiles Windows .exe via PyInstaller (requires Windows runner)
+#
 # Triggered on:
 #   - MR targeting `dev` or `main`
 #   - Direct push to `dev` or `main`
+#   - Git tags (vX.Y.Z) — also triggers build stage
 # ---------------------------------------------------------------------------
 
 default:
@@ -35,7 +40,8 @@ workflow:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event" &&
           ($CI_MERGE_REQUEST_TARGET_BRANCH_NAME == "dev" ||
            $CI_MERGE_REQUEST_TARGET_BRANCH_NAME == "main")
-    - if: $CI_COMMIT_BRANCH == "dev" || $CI_COMMIT_BRANCH == "main" || $CI_COMMIT_BRANCH == "ci/gitlab-pipeline-and-linting"
+    - if: $CI_COMMIT_BRANCH == "dev" || $CI_COMMIT_BRANCH == "main"
+    - if: $CI_COMMIT_TAG =~ /^v\d+\.\d+\.\d+/   # semver tags trigger build+release
 
 # ---------------------------------------------------------------------------
 # Stages
@@ -44,6 +50,7 @@ workflow:
 stages:
   - lint
   - test
+  - build
 
 # ---------------------------------------------------------------------------
 # Lint — all three run in parallel; all must pass before tests start
@@ -95,3 +102,121 @@ test:api:
     reports:
       junit: report-api.xml
     expire_in: 7 days
+
+# ---------------------------------------------------------------------------
+# Build — only on main branch or semver tags, after tests pass
+#
+# PURPOSE: Early verification that PyInstaller packaging succeeds.
+#          The compiled binary is uploaded to the GitLab Generic Package
+#          Registry so the pdf-extractor-ui CI can optionally download it
+#          instead of recompiling from scratch.
+#
+# IMPORTANT: build:windows requires a self-hosted runner with tag 'windows'.
+#            The runner must have Python 3.11 installed and in PATH.
+# ---------------------------------------------------------------------------
+
+build:linux:
+  stage: build
+  # Override the default python:3.11-slim — PyInstaller needs gcc and binutils
+  image: python:3.11
+  tags:
+    - saas-linux-medium-amd64
+  # Separate cache key so pip packages for building don't mix with lint/test
+  cache:
+    key: "build-linux-$CI_COMMIT_REF_SLUG"
+    paths:
+      - .pip-cache/
+  before_script:
+    # Install system build tools needed by some Python C-extensions
+    - apt-get update -qy && apt-get install -y --no-install-recommends binutils
+    - pip install --cache-dir .pip-cache -e "." pyinstaller -q
+  script:
+    - echo "==> Building Linux backend binary with PyInstaller..."
+    - python build_backend.py
+    - echo "==> Verifying output..."
+    - test -f dist/pdf-extractor-backend/pdf-extractor-backend
+    - echo "==> Build successful. Binary size:"
+    - du -sh dist/pdf-extractor-backend/
+    # Upload compiled binary to Package Registry for consumption by pdf-extractor-ui
+    - |
+      PACKAGE_VERSION="${CI_COMMIT_TAG:-dev-${CI_COMMIT_SHORT_SHA}}"
+      echo "==> Uploading Linux binary to Package Registry as version: $PACKAGE_VERSION"
+      tar -czf pdf-extractor-backend-linux.tar.gz -C dist pdf-extractor-backend
+      curl --fail --silent --show-error \
+           --header "JOB-TOKEN: $CI_JOB_TOKEN" \
+           --upload-file pdf-extractor-backend-linux.tar.gz \
+           "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/generic/pdf-extractor-backend/${PACKAGE_VERSION}/pdf-extractor-backend-linux.tar.gz"
+      echo "==> Upload complete."
+  rules:
+    # Only build on main and tags not on dev or MRs (too expensive for every commit)
+    - if: $CI_COMMIT_BRANCH == "main"
+    - if: $CI_COMMIT_TAG =~ /^v\d+\.\d+\.\d+/
+  artifacts:
+    name: "pdf-extractor-backend-linux-$CI_COMMIT_REF_SLUG"
+    expire_in: 7 days
+    paths:
+      - dist/pdf-extractor-backend/
+    when: on_success
+
+build:windows:
+  stage: build
+  tags:
+    - windows
+  # ---------------------------------------------------------------------------
+  # WHY THERE IS NO image: KEY
+  #
+  # GitLab Runner has two executor types relevant to Windows:
+  #
+  #   1. Shell executor (PowerShell) — the runner executes scripts directly on
+  #      the Windows host. The image: key is completely IGNORED. Python, Node,
+  #      and Git must be pre-installed on the machine (or installed via
+  #      Chocolatey in before_script). This is the most common setup for
+  #      self-hosted Windows runners and is what GitLab.com shared Windows
+  #      runners use.
+  #
+  #   2. Docker-Windows executor — the runner spawns a Windows container using
+  #      the image: key (e.g. mcr.microsoft.com/windows/servercore:ltsc2022).
+  #      This requires Docker Desktop or Mirantis Container Runtime on the host
+  #      and is significantly more complex to set up.
+  #
+  # We target the Shell executor (option 1) because it is far more common and
+  # requires no additional infrastructure beyond registering the runner.
+  #
+  # inherit: default: false prevents the Linux `image: python:3.11` from the
+  # default: block above from leaking into this job. Without it, a Docker
+  # executor would try to pull a Linux image on a Windows host and fail.
+  # ---------------------------------------------------------------------------
+  inherit:
+    default: false
+  # GitLab.com shared Windows runner tag.
+  # Verify the current tag at: https://docs.gitlab.com/ee/ci/runners/hosted_runners/windows.html
+  tags:
+    - saas-windows-medium-amd64
+  before_script:
+    - Write-Host "==> Installing Python dependencies and PyInstaller..."
+    - pip install -e "." pyinstaller
+  script:
+    - Write-Host "==> Building Windows backend binary with PyInstaller..."
+    - python build_backend.py
+    - Write-Host "==> Verifying output..."
+    - if (!(Test-Path "dist/pdf-extractor-backend/pdf-extractor-backend.exe")) { Write-Error "Binary not found!"; exit 1 }
+    - Write-Host "==> Build successful."
+    # Upload compiled binary to Package Registry
+    - |
+      $PACKAGE_VERSION = if ($env:CI_COMMIT_TAG) { $env:CI_COMMIT_TAG } else { "dev-$env:CI_COMMIT_SHORT_SHA" }
+      Write-Host "==> Uploading Windows binary to Package Registry as version: $PACKAGE_VERSION"
+      Compress-Archive -Path dist/pdf-extractor-backend -DestinationPath pdf-extractor-backend-windows.zip -Force
+      curl.exe --fail --silent --show-error `
+               --header "JOB-TOKEN: $env:CI_JOB_TOKEN" `
+               --upload-file pdf-extractor-backend-windows.zip `
+               "$env:CI_API_V4_URL/projects/$env:CI_PROJECT_ID/packages/generic/pdf-extractor-backend/$PACKAGE_VERSION/pdf-extractor-backend-windows.zip"
+      Write-Host "==> Upload complete."
+  rules:
+    - if: $CI_COMMIT_BRANCH == "main"
+    - if: $CI_COMMIT_TAG =~ /^v\d+\.\d+\.\d+/
+  artifacts:
+    name: "pdf-extractor-backend-windows-$CI_COMMIT_REF_SLUG"
+    expire_in: 7 days
+    paths:
+      - dist/pdf-extractor-backend/
+    when: on_success
