@@ -234,12 +234,18 @@ build:windows:
     - windows
   before_script:
     - |
+      Write-Host "==> Moving into the correct GitLab build repository directory..."
+      cd "$env:CI_PROJECT_DIR"
+
       Write-Host "==> Verifying Python and Pip via explicit global paths..."
       & "C:\Program Files\Python311-arm64\python.exe" --version
       & "C:\Program Files\Python311-arm64\Scripts\pip.exe" --version
+      
+      Write-Host "==> Forcing Python to trust local system and university SSL certificates..."
+      & "C:\Program Files\Python311-arm64\Scripts\pip.exe" install pip-system-certs certifi --trusted-host pypi.org --trusted-host files.pythonhosted.org
 
       Write-Host "==> Installing Python dependencies and PyInstaller..."
-      & "C:\Program Files\Python311-arm64\Scripts\pip.exe" install -e . pyinstaller
+      & "C:\Program Files\Python311-arm64\Scripts\pip.exe" install -e . pyinstaller --trusted-host pypi.org --trusted-host files.pythonhosted.org --trusted-host mupdf.com
   script:
     - |
       cd "$env:CI_PROJECT_DIR"
