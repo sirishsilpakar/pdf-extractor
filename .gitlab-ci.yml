@@ -238,19 +238,19 @@ build:windows:
       cd "$env:CI_PROJECT_DIR"
 
       Write-Host "==> Verifying Python and Pip via explicit global paths..."
-      & "C:\Program Files\Python311-arm64\python.exe" --version
-      & "C:\Program Files\Python311-arm64\Scripts\pip.exe" --version
+      & "C:\Program Files\Python311\python.exe" --version
+      & "C:\Program Files\Python311\Scripts\pip.exe" --version
       
       Write-Host "==> Forcing Python to trust local system and university SSL certificates..."
-      & "C:\Program Files\Python311-arm64\Scripts\pip.exe" install pip-system-certs certifi --trusted-host pypi.org --trusted-host files.pythonhosted.org
+      & "C:\Program Files\Python311\Scripts\pip.exe" install pip-system-certs certifi --trusted-host pypi.org --trusted-host files.pythonhosted.org
 
       Write-Host "==> Installing Python dependencies and PyInstaller..."
-      & "C:\Program Files\Python311-arm64\Scripts\pip.exe" install -e . pyinstaller --trusted-host pypi.org --trusted-host files.pythonhosted.org --trusted-host mupdf.com
+      & "C:\Program Files\Python311\Scripts\pip.exe" install -e . pyinstaller --trusted-host pypi.org --trusted-host files.pythonhosted.org --trusted-host mupdf.com
   script:
     - |
       cd "$env:CI_PROJECT_DIR"
       Write-Host "==> Building Windows backend binary with PyInstaller..."
-      & "C:\Program Files\Python311-arm64\python.exe" build_backend.py
+      & "C:\Program Files\Python311\python.exe" build_backend.py
 
       Write-Host "==> Verifying output..."
       if (!(Test-Path "dist/pdf-extractor-backend/pdf-extractor-backend.exe")) { 
