@@ -84,7 +84,10 @@ class StartJobRequest(BaseModel):
         default=None,
         description="Optional mapping of ref_id -> list of relative paths to process. If provided for a ref_id, only these files will be processed.",
     )
-    output_dir: str = Field(default="extracted_files")
+    output_dir: str = Field(
+        default="",
+        description="Empty by default so output is stored in global output_dir only. If specified, output is stored in a subfolder of the global output_dir",
+    )
     force: bool = Field(
         default=False,
         description="Reprocess files that are already in the database",

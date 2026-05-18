@@ -309,6 +309,7 @@ class JobManager:
                 "page": 0,
                 "total_pages": 0,
                 "status": "processing",
+                "method": "direct",
             }
         )
         self._emit({"type": "state_update", **self.get_status()})
@@ -321,12 +322,30 @@ class JobManager:
         pid = event.get("pid", "?")
         secs = event.get("seconds", 0)
 
+        running_overall_method = ExtractionMethod.DIRECT.value
         with self._lock:
             entry = self._state.find_by_name(basename)
             if entry and total_pages > 0:
                 entry.current_page = page
                 entry.total_pages = total_pages
                 entry.progress_pct = min(99, int(page / total_pages * 100))
+
+                # Track running count of page extraction methods dynamically
+                if not hasattr(entry, "_ocr_pages_count"):
+                    entry._ocr_pages_count = 0
+                if not hasattr(entry, "_direct_pages_count"):
+                    entry._direct_pages_count = 0
+
+                if method == ExtractionMethod.OCR.value:
+                    entry._ocr_pages_count += 1
+                elif method == ExtractionMethod.DIRECT.value:
+                    entry._direct_pages_count += 1
+
+                if entry._ocr_pages_count > entry._direct_pages_count:
+                    entry.method = ExtractionMethod.OCR
+                else:
+                    entry.method = ExtractionMethod.DIRECT
+                running_overall_method = entry.method.value
 
         tag = "OCR" if method == ExtractionMethod.OCR.value else "DIRECT"
         self._append_log(
@@ -340,6 +359,7 @@ class JobManager:
                 "pct": min(99, int(page / total_pages * 100)) if total_pages else 0,
                 "page": page,
                 "total_pages": total_pages,
+                "method": running_overall_method,
             }
         )
 
@@ -381,6 +401,9 @@ class JobManager:
                 "file": os.path.basename(file_path),
                 "pct": 100,
                 "status": final_status,
+                "method": (
+                    entry.method.value if entry else ExtractionMethod.DIRECT.value
+                ),
             }
         )
         self._emit({"type": "state_update", **self.get_status()})
