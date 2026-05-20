@@ -24,15 +24,19 @@ class PagedResponse(BaseModel, Generic[T]):
     size: int = Field(description="Items per page requested")
     pages: int = Field(description="Total number of pages")
     items: List[T] = Field(description="Items on this page")
+    run_id: Optional[str] = Field(default=None, description="Current Job run ID")
 
     @classmethod
-    def build(cls, total: int, page: int, size: int, items: list) -> "PagedResponse":
+    def build(
+        cls, total: int, page: int, size: int, items: list, run_id: Optional[str] = None
+    ) -> "PagedResponse":
         return cls(
             total=total,
             page=page,
             size=size,
             pages=math.ceil(total / size) if size > 0 else 0,
             items=items,
+            run_id=run_id,
         )
 
 
@@ -125,6 +129,7 @@ class JobStatusResponse(BaseModel):
     eta_seconds: Optional[int]
     current_file: str
     log: List[dict] = Field(default_factory=list)
+    run_id: Optional[str] = Field(default=None)
 
 
 class FileEntryResponse(BaseModel):
