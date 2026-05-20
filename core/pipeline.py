@@ -168,9 +168,9 @@ def run_pipeline(
     if not run_id:
         run_id = _uuid.uuid4().hex
 
-    def _log(msg: str) -> None:
+    def _log(msg: str, level: str = "info") -> None:
         logger.info(msg)
-        _emit(progress_callback, LogEvent(message=f"[INFO] {msg}"))
+        _emit(progress_callback, LogEvent(message=msg, level=level))
 
     _log(f"Pipeline started - input={input_dir!r} output={output_dir!r} force={force}")
     logger.info("Workers=%d timeout=%ds", WORKERS, JOB_TIMEOUT_SECONDS)
@@ -406,7 +406,10 @@ def run_pipeline(
     )
 
     if ocr_missing_flag.is_set():
-        _log("CRITICAL: OCR engine/binary is not installed. Pipeline stopped early.")
+        _log(
+            "CRITICAL: OCR engine/binary is not installed. Pipeline stopped early.",
+            level="error",
+        )
 
     if run_id and db:
         # Update the run record with final status
