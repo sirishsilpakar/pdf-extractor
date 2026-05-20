@@ -58,12 +58,12 @@ class LogBuffer:
     """Fixed capacity FIFO log line store."""
 
     def __init__(self, maxlen: int = 500) -> None:
-        self._lines: Deque[str] = deque(maxlen=maxlen)
+        self._lines: Deque[dict] = deque(maxlen=maxlen)
 
-    def append(self, msg: str) -> None:
-        self._lines.append(msg)
+    def append(self, msg: str, level: str = "info") -> None:
+        self._lines.append({"message": msg, "level": level})
 
-    def snapshot(self) -> list[str]:
+    def snapshot(self) -> list[dict]:
         return list(self._lines)
 
     def clear(self) -> None:
