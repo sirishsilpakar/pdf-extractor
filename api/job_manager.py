@@ -274,7 +274,16 @@ class JobManager:
 
     def handle_event(self, event: dict) -> None:
         """Route an event dict to the appropriate handler (progress callback)"""
+        with self._lock:
+            is_cancelled = self._state.status == JobStatus.CANCELLED
+
         etype = event.get("type", "")
+
+        # Immediately stop processing worker events if the job was cancelled
+        # Only allow the "done" event so the pipeline thread can gracefully exit and flush logs
+        if is_cancelled and etype != "done":
+            return
+
         handler = self._handlers.get(etype)
         if handler:
             handler(event)
