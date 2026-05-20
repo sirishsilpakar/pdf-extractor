@@ -261,6 +261,7 @@ class JobManager:
                 "batch_ids": self._state.batch_ids,
                 "error_message": self._state.error_message,
                 "log": self._state.log.snapshot(),
+                "run_id": self._state.run_id,
             }
 
     def get_files_page(
