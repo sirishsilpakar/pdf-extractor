@@ -285,7 +285,7 @@ def run_pipeline(
                 result: FileResult
 
                 if ocr_missing_flag.is_set():
-                    _log("OCR engine missing - stopping pipeline.")
+                    _log("OCR engine missing - stopping pipeline.", level="error")
                     pool.terminate()
                     break
 

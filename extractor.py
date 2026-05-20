@@ -230,7 +230,8 @@ def run_pipeline(
                 # worker process -> main process consumer thread -> threading.Event (the full cross-process signal chain)
                 if ocr_engine_missing_flag.is_set():
                     _log(
-                        "OCR engine or library is missing. Terminating pipeline as requested."
+                        "OCR engine or library is missing. Terminating pipeline as requested.",
+                        level="error",
                     )
                     pool.terminate()
                     break
