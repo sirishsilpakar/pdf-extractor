@@ -58,12 +58,12 @@ class LogBuffer:
     """Fixed capacity FIFO log line store."""
 
     def __init__(self, maxlen: int = 500) -> None:
-        self._lines: Deque[str] = deque(maxlen=maxlen)
+        self._lines: Deque[dict] = deque(maxlen=maxlen)
 
-    def append(self, msg: str) -> None:
-        self._lines.append(msg)
+    def append(self, msg: str, level: str = "info") -> None:
+        self._lines.append({"message": msg, "level": level})
 
-    def snapshot(self) -> list[str]:
+    def snapshot(self) -> list[dict]:
         return list(self._lines)
 
     def clear(self) -> None:
@@ -203,7 +203,7 @@ class JobManager:
             )
 
         if settings:
-            self._append_log(f"[INFO] Settings received: {settings}")
+            self._append_log(f"Settings received: {settings}", level="info")
 
         self._emit({"type": "state_update", **self.get_status()})
 
@@ -230,7 +230,7 @@ class JobManager:
                 self._state.status = JobStatus.CANCELLED
                 self._state.end_time = time.time()
         self._emit({"type": "state_update", **self.get_status()})
-        self._append_log("[INFO] Pipeline cancellation requested by user.")
+        self._append_log("Pipeline cancellation requested by user.", level="info")
 
     def get_status(self) -> dict:
         """Return compact metadata dict (does not include the files list)"""
@@ -283,7 +283,7 @@ class JobManager:
     # ------------------------------------------------------------------
 
     def _on_log(self, event: dict) -> None:
-        self._append_log(event.get("message", ""))
+        self._append_log(event.get("message", ""), level=event.get("level", "info"))
 
     def _on_file_started(self, event: dict) -> None:
         file_path = event.get("file_path", "")
@@ -298,7 +298,7 @@ class JobManager:
                 entry.current_page = 0
             self._state.current_file = basename
 
-        self._append_log(f"[INFO] Worker {pid} → {basename}")
+        self._append_log(f"Worker {pid} -> {basename}", level="info")
 
         # Use for immediate row update (for UI) without requiring full state refetch
         self._emit(
@@ -349,7 +349,8 @@ class JobManager:
 
         tag = "OCR" if method == ExtractionMethod.OCR.value else "DIRECT"
         self._append_log(
-            f"[INFO] W{pid} · {basename}  pg {page}/{total_pages}  {tag}  {secs:.2f}s"
+            f"W{pid} · {basename}  pg {page}/{total_pages}  {tag}  {secs:.2f}s",
+            level="info",
         )
         # Lightweight targeted event to avoid full state_update on every page
         self._emit(
@@ -416,16 +417,19 @@ class JobManager:
             self._state.current_file = ""
 
         self._append_log(
-            f"[OK] Pipeline complete - "
+            f"Pipeline complete - "
             f"done: {event.get('done', 0)} "
             f"direct: {event.get('direct', 0)} "
             f"ocr: {event.get('ocr', 0)} "
-            f"failed: {event.get('failed', 0)}"
+            f"failed: {event.get('failed', 0)}",
+            level="success",
         )
         self._emit({"type": "state_update", **self.get_status()})
 
     def _on_ocr_missing(self, _event: dict) -> None:
-        self._append_log("[ERROR] OCR engine/binary not installed - pipeline stopped.")
+        self._append_log(
+            "OCR engine/binary not installed - pipeline stopped.", level="error"
+        )
 
     # ------------------------------------------------------------------
     # Internal helper methods
@@ -441,11 +445,11 @@ class JobManager:
         end = self._state.end_time if self._state.end_time is not None else time.time()
         return round(end - self._state.start_time, 1)
 
-    def _append_log(self, msg: str) -> None:
+    def _append_log(self, msg: str, level: str = "info") -> None:
         """Append to log buffer then broadcast state mutation and side effect separated"""
         with self._lock:
-            self._state.log.append(msg)
-        self._emit({"type": "log", "message": msg})
+            self._state.log.append(msg, level)
+        self._emit({"type": "log", "message": msg, "level": level})
 
     def _emit(self, event: dict) -> None:
         """Broadcast an event, swallow exceptions so a stalled client never kills the pipeline"""
@@ -487,7 +491,7 @@ class JobManager:
             )
         except Exception as exc:
             _logging.exception("Pipeline thread crashed: %s", exc)
-            self._append_log(f"[ERROR] Pipeline crashed: {exc}")
+            self._append_log(f"Pipeline crashed: {exc}", level="error")
             with self._lock:
                 self._state.status = JobStatus.DONE
                 self._state.error_message = str(exc)
@@ -513,7 +517,11 @@ class JobManager:
                 lines = self._state.log.snapshot()
 
             with open(log_path, "w", encoding="utf-8") as fh:
-                fh.write("\n".join(lines))
+                fh.write(
+                    "\n".join(
+                        f"[{line['level'].upper()}] {line['message']}" for line in lines
+                    )
+                )
 
             if db is not None and hasattr(db, "save_run_log_path"):
                 db.save_run_log_path(run_id, log_path)

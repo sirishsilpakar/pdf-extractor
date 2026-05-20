@@ -123,14 +123,15 @@ def run_cmd(input_dir, output_dir, workers, force, no_ocr, fast, dpi, db_path, q
 
         if etype == "log":
             msg = event.get("message", "")
+            level = event.get("level", "info")
             if not msg:
                 return
-            # Colour-code by severity prefix
-            if "[ERROR]" in msg or "FAILURE" in msg:
+
+            if level == "error":
                 click.secho(msg, fg="red", err=True)
-            elif "[WARN]" in msg or "WARNING" in msg:
+            elif level == "warning":
                 click.secho(msg, fg="yellow")
-            elif "[OK]" in msg or "FINISHED" in msg:
+            elif level == "success" or level == "ok":
                 click.secho(msg, fg="bright_green")
             else:
                 click.echo(msg)

@@ -85,6 +85,7 @@ class PipelineOutcome(str, Enum):
 @dataclass
 class LogEvent:
     message: str
+    level: str = "info"
     type: str = "log"
 
 
