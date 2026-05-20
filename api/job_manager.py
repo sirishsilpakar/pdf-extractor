@@ -182,10 +182,10 @@ class JobManager:
         timeout_seconds: int = 0,
         batch_ids: Optional[list[str]] = None,
         skip_count: int = 0,
-    ) -> bool:
+    ) -> Optional[str]:
         """Start the pipeline in a background thread.
 
-        Returns 'False' if a job is already running
+        Returns run_id if started, or None if a job is already running
         """
         import uuid as _uuid
 
@@ -193,7 +193,7 @@ class JobManager:
 
         with self._lock:
             if self._state.status == JobStatus.RUNNING:
-                return False
+                return None
             self._cancel.clear()
             self._state.reset(
                 file_entries,
@@ -221,7 +221,7 @@ class JobManager:
             daemon=True,
         )
         thread.start()
-        return True
+        return run_id
 
     def cancel_job(self) -> None:
         self._cancel.set()

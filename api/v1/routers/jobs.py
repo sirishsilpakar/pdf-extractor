@@ -295,7 +295,7 @@ async def start_job(
             # slightly over-reported but processing will still work correctly
             skip_count = 0
 
-    started = jm.start_job(
+    run_id = jm.start_job(
         file_entries=entries,
         input_dir=input_dir,
         output_dir=output_dir,
@@ -308,10 +308,15 @@ async def start_job(
         skip_count=skip_count,
     )
 
-    if not started:
+    if not run_id:
         raise HTTPException(409, detail="A job is already running.")
 
-    resp: dict = {"ok": True, "total": len(entries) - skip_count, "skipped": skip_count}
+    resp: dict = {
+        "ok": True,
+        "total": len(entries) - skip_count,
+        "skipped": skip_count,
+        "run_id": run_id,
+    }
     if missing:
         resp["warnings"] = (
             f"{len(missing)} file ID(s) not found on disk "
@@ -363,9 +368,11 @@ async def list_job_files(
 ) -> PagedResponse[FileEntryResponse]:
     jm: JobManager
     total, items = jm.get_files_page(page, size, skip_processed)
+    status = jm.get_status()
     return PagedResponse.build(
         total=total,
         page=page,
         size=size,
         items=[FileEntryResponse(**item) for item in items],
+        run_id=status.get("run_id"),
     )
