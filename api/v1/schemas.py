@@ -128,7 +128,7 @@ class JobStatusResponse(BaseModel):
     elapsed: float
     eta_seconds: Optional[int]
     current_file: str
-    log: List[str] = Field(default_factory=list)
+    log: List[dict] = Field(default_factory=list)
     run_id: Optional[str] = Field(default=None)
 
 
