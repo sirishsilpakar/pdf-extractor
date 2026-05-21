@@ -280,8 +280,7 @@ class JobManager:
         etype = event.get("type", "")
 
         # Immediately stop processing worker events if the job was cancelled
-        # Only allow the "done" event so the pipeline thread can gracefully exit and flush logs
-        if is_cancelled and etype != "done":
+        if is_cancelled:
             return
 
         handler = self._handlers.get(etype)
