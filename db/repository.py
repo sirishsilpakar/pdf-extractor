@@ -235,6 +235,13 @@ class DatabaseRepository:
         conn.execute("PRAGMA journal_mode=WAL")
         conn.execute("PRAGMA foreign_keys=ON")
         conn.execute("PRAGMA busy_timeout=5000")
+
+        # Register custom function for fast directory grouping in SQL
+        # The function splits the path by / and returns the first element (i.e. the directory)
+        conn.create_function(
+            "dirname", 1, lambda p: p.rsplit("/", 1)[0] if p and "/" in p else ""
+        )
+
         return conn
 
     @staticmethod
@@ -306,14 +313,14 @@ class DatabaseRepository:
 
                 if current == _SCHEMA_VERSION:
                     logger.debug(
-                        "Schema already at v%d — no migrations needed", current
+                        "Schema already at v%d - no migrations needed", current
                     )
 
             finally:
                 conn.close()
 
     def reset(self) -> None:
-        """Delete all rows — used by the CLI 'reset' command and tests."""
+        """Delete all rows used by the CLI 'reset' command and tests."""
         with self._lock:
             conn = self._connect()
             try:
@@ -447,6 +454,23 @@ class DatabaseRepository:
             finally:
                 conn.close()
 
+    def get_all_run_ids(self, page: int = 1, size: int = 20) -> tuple[int, list[str]]:
+        """Return a paginated list of all run IDs """
+        offset = (page - 1) * size
+        with self._lock:
+            conn = self._connect()
+            try:
+                total = conn.execute("SELECT COUNT(*) FROM runs").fetchone()[0]
+                rows = conn.execute(
+                    """
+                    SELECT run_id FROM runs ORDER BY started_at DESC LIMIT ? OFFSET ?
+                    """,
+                    (size, offset),
+                ).fetchall()
+                return total, [r for r in rows]
+            finally:
+                conn.close()
+
     def get_run(self, run_id: str) -> dict | None:
         """Single run record with elapsed_seconds"""
         with self._lock:
@@ -469,28 +493,112 @@ class DatabaseRepository:
                 conn.close()
 
     def get_run_files(
-        self, run_id: str, page: int = 1, size: int = 50
+        self, run_id: str, page: int = 1, size: int = 50, directory: str | None = None
     ) -> tuple[int, list[dict]]:
-        """Paginated list of extracted_texts rows belonging to a run"""
+        """Paginated list of extracted_texts rows belonging to a specific run, optionally filtered by directory"""
+        offset = (max(page, 1) - 1) * size
+
+        where_clause = "WHERE run_id = ?"
+        params = [run_id]
+
+        if directory is not None:
+            if directory == "":  # Root directory
+                # Only include files that don't have a slash in their rel_path (excluding the filename part)
+                pass  # Handled below
+
+        with self._lock:
+            conn = self._connect()
+            try:
+                if directory:
+                    where_clause += " AND rel_path LIKE ?"
+                    params.append(f"{directory}/%")
+                elif directory == "":
+                    # Top level files don't have a slash before the filename
+                    where_clause += " AND instr(rel_path, '/') = 0"
+
+                total = conn.execute(
+                    f"SELECT COUNT(*) FROM extracted_texts {where_clause}", params
+                ).fetchone()[0]
+                rows = conn.execute(
+                    f"""
+                    SELECT id, filename, rel_path, method, char_count,
+                           page_count, content_hash, processed_at, confidence, flags
+                    FROM extracted_texts
+                    {where_clause}
+                    ORDER BY rel_path ASC, filename ASC
+                    LIMIT ? OFFSET ?
+                    """,
+                    params + [size, offset],
+                ).fetchall()
+                return total, [dict(r) for r in rows]
+            finally:
+                conn.close()
+
+    def get_run_tree(
+        self, run_id: Optional[str] = None, page: int = 1, size: int = 50
+    ) -> dict:
+        """Returns paginated directories and top level files"""
         offset = (max(page, 1) - 1) * size
         with self._lock:
             conn = self._connect()
             try:
-                total = conn.execute(
-                    "SELECT COUNT(*) FROM extracted_texts WHERE run_id = ?", (run_id,)
+                # Filter only files that are in a directory (i.e. have a slash in their rel_path)
+                # instr is a sqlite function that returns the position of a substring in a string
+                where_clause = "instr(e.rel_path, '/') > 0"
+
+                # Filter only top-level files (i.e. no slash in their rel_path)
+                top_where_clause = "instr(e.rel_path, '/') = 0"
+                params = []
+                if run_id:
+                    where_clause += " AND e.run_id = ?"
+                    top_where_clause += " AND e.run_id = ?"
+                    params.append(run_id)
+
+                # Paginated directories
+                total_dirs = conn.execute(
+                    f"SELECT COUNT(*) FROM (SELECT 1 FROM extracted_texts e WHERE {where_clause} GROUP BY e.run_id, dirname(e.rel_path))",
+                    params,
                 ).fetchone()[0]
-                rows = conn.execute(
-                    """
-                    SELECT id, filename, rel_path, method, char_count,
-                           page_count, content_hash, processed_at, confidence, flags
-                    FROM extracted_texts
-                    WHERE run_id = ?
-                    ORDER BY processed_at ASC
+
+                dir_rows = conn.execute(
+                    f"""
+                    SELECT e.run_id, dirname(e.rel_path) AS path, count(*) AS count, max(e.processed_at) as last_processed
+                    FROM extracted_texts e
+                    WHERE {where_clause}
+                    GROUP BY e.run_id, path
+                    ORDER BY last_processed DESC, path ASC
                     LIMIT ? OFFSET ?
                     """,
-                    (run_id, size, offset),
+                    params + [size, offset],
                 ).fetchall()
-                return total, [dict(r) for r in rows]
+                dirs = [dict(r) for r in dir_rows]
+
+                # Paginated top level files
+                total_top_files = conn.execute(
+                    f"SELECT COUNT(*) FROM extracted_texts e WHERE {top_where_clause}",
+                    params,
+                ).fetchone()[0]
+
+                top_files_rows = conn.execute(
+                    f"""
+                    SELECT e.id, e.filename, e.rel_path, e.method, e.char_count,
+                           e.page_count, e.content_hash, e.processed_at, e.confidence, e.flags, e.run_id
+                    FROM extracted_texts e
+                    WHERE {top_where_clause}
+                    ORDER BY e.processed_at DESC, e.filename ASC
+                    LIMIT ? OFFSET ?
+                    """,
+                    params + [size, offset],
+                ).fetchall()
+
+                return {
+                    "directories": dirs,
+                    "directories_total": total_dirs,
+                    "top_level_files": [dict(r) for r in top_files_rows],
+                    "top_level_files_total": total_top_files,
+                    "page": page,
+                    "size": size,
+                }
             finally:
                 conn.close()
 
@@ -661,14 +769,22 @@ class DatabaseRepository:
         if run_id:
             where_clauses.append("e.run_id = ?")
             params.append(run_id)
-        if rel_path_prefix:
-            # Matches directories: rel_path starts with prefix
-            where_clauses.append("e.rel_path LIKE ?")
-            params.append(f"{rel_path_prefix.rstrip('/')}/%")
+        if rel_path_prefix is not None:
+            if rel_path_prefix == "":
+                where_clauses.append("instr(e.rel_path, '/') = 0")
+            else:
+                where_clauses.append("e.rel_path LIKE ?")
+                params.append(f"{rel_path_prefix.rstrip('/')}/%")
 
         where_sql = ""
         if where_clauses:
             where_sql = "WHERE " + " AND ".join(where_clauses)
+
+        order_sql = "ORDER BY r.started_at DESC, r.run_id, e.processed_at DESC"
+        if run_id:
+            # Sort by directory and filename if filtering by a single run
+            # so that grouped results stay continuous across pagination
+            order_sql = "ORDER BY e.rel_path ASC, e.filename ASC"
 
         with self._lock:
             conn = self._connect()
@@ -824,7 +940,7 @@ class DatabaseRepository:
             size:  Results per page
 
         Returns:
-            '(total, rows)' — rows contain doc_id, filename, rel_path,
+            '(total, rows)' rows contain doc_id, filename, rel_path,
             page_no (best match), snippet (HTML with '<mark>' tags), rank
         """
         # Sanitise query to wrap in quotes if it looks like plain text

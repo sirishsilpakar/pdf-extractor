@@ -151,13 +151,10 @@ class ResultRecord(BaseModel):
     id: int
     run_id: Optional[str] = None
     run_started_at: Optional[str] = None
-    source_path: str
     filename: str
     rel_path: str
-    txt_path: str
     method: str
     char_count: int
-    page_count: int
     content_hash: Optional[str]
     processed_at: str
     confidence: Optional[float] = None
@@ -166,6 +163,9 @@ class ResultRecord(BaseModel):
 
 class ResultDetail(ResultRecord):
     content: str = Field(description="Full text content read from disk")
+    page_count: int
+    source_path: str
+    txt_path: str
 
 
 class RunRecord(BaseModel):
