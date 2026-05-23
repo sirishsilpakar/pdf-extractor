@@ -12,7 +12,12 @@ from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import PlainTextResponse
 
 from api.v1.deps import DBDep
-from api.v1.schemas import PagedResponse, ResultRecord, RunRecord
+from api.v1.schemas import (
+    PagedResponse,
+    ResultRecord,
+    RunRecord,
+    RunTreeResponse,
+)
 
 router = APIRouter()
 
@@ -34,6 +39,26 @@ async def list_runs(
         page=page,
         size=size,
         items=[RunRecord(**r) for r in rows],
+    )
+
+
+@router.get(
+    "/ids",
+    response_model=PagedResponse[RunIdItem],
+    summary="List all run IDs",
+    description="Returns a paginated list of all run IDs, newest first, for filtering",
+)
+async def list_run_ids(
+    db: DBDep = ...,  # type: ignore[assignment]
+    page: int = Query(1, ge=1),
+    size: int = Query(20, ge=1, le=100),
+) -> PagedResponse[RunIdItem]:
+    total, rows = db.get_all_run_ids(page=page, size=size)
+    return PagedResponse.build(
+        total=total,
+        page=page,
+        size=size,
+        items=[r for r in rows],
     )
 
 

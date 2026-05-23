@@ -248,4 +248,37 @@ class FileReferenceResponse(BaseModel):
     files: List[FileReferenceItem] = Field(
         default_factory=list,
         description="Detailed list of individual PDF files found under the path",
-    )
+
+class DirectoryNode(BaseModel):
+    run_id: str
+    path: str
+    count: int
+
+
+class RunTreeResponse(BaseModel):
+    directories: List[DirectoryNode]
+    directories_total: int
+    top_level_files: List[ResultRecord]
+    top_level_files_total: int
+    page: int
+    size: int
+    pages: int
+
+    @classmethod
+    def build(cls, data: dict) -> "RunTreeResponse":
+        import math
+
+        size = data["size"]
+        dirs_total = data["directories_total"]
+        files_total = data["top_level_files_total"]
+        max_total = max(dirs_total, files_total)
+        pages = max(1, math.ceil(max_total / size) if size > 0 else 1)
+        return cls(
+            directories=data["directories"],
+            directories_total=dirs_total,
+            top_level_files=data["top_level_files"],
+            top_level_files_total=files_total,
+            page=data["page"],
+            size=size,
+            pages=pages,
+        )
