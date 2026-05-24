@@ -78,6 +78,25 @@ async def get_run(
 
 
 @router.get(
+    "/{run_id}/tree",
+    response_model=RunTreeResponse,
+    summary="Get directory and file tree for a run",
+    description="Returns a structural breakdown of the run (directories and top-level files)",
+)
+async def get_run_tree(
+    run_id: str,
+    db: DBDep = ...,  # type: ignore[assignment]
+) -> RunTreeResponse:
+    if not db.get_run(run_id):
+        raise HTTPException(404, detail=f"Run {run_id!r} not found.")
+    tree = db.get_run_tree(run_id)
+
+    tree["top_level_files"] = [ResultRecord(**r) for r in tree["top_level_files"]]
+
+    return RunTreeResponse.build(tree)
+
+
+@router.get(
     "/{run_id}/files",
     response_model=PagedResponse[ResultRecord],
     summary="List files processed in a specific run",
@@ -88,11 +107,16 @@ async def get_run_files(
     db: DBDep = ...,  # type: ignore[assignment]
     page: int = Query(1, ge=1),
     size: int = Query(50, ge=1, le=200),
+    directory: str | None = Query(
+        None, description="Optional relative directory path prefix to filter files"
+    ),
 ) -> PagedResponse[ResultRecord]:
     # Verify run exists
     if not db.get_run(run_id):
         raise HTTPException(404, detail=f"Run {run_id!r} not found.")
-    total, rows = db.get_run_files(run_id=run_id, page=page, size=size)
+    total, rows = db.get_run_files(
+        run_id=run_id, page=page, size=size, directory=directory
+    )
     # get_run_files returns minimal columns and fill missing ones with defaults
     items = []
     for r in rows:
