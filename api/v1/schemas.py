@@ -183,6 +183,7 @@ class RunRecord(BaseModel):
     )
     input_dir: Optional[str] = None
     log_path: Optional[str] = None  # absolute path to per-run activity log .txt
+    output_dir: Optional[str] = None
 
 
 class ExtractedFileRecord(BaseModel):
