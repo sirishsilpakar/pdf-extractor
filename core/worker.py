@@ -62,7 +62,9 @@ def pool_init(queue, ocr_engine: Optional[OCREngine]) -> None:
 
 
 # Public task wrapper (top-level for pickling)
-def tracked_process_file(file_path: str, input_dir: str, output_dir: str) -> FileResult:
+def tracked_process_file(
+    file_path: str, input_dir: str, output_dir: str, settings: Optional[dict] = None
+) -> FileResult:
     """Picklable wrapper submitted to the pool via 'imap_unordered'.
 
     Emits a 'FileStartedEvent' before delegating to 'process_file'.
@@ -85,15 +87,21 @@ def tracked_process_file(file_path: str, input_dir: str, output_dir: str) -> Fil
         output_dir_root=output_dir,
         ocr_engine=_OCR_ENGINE,
         event_queue=_WORKER_QUEUE,
+        settings=settings,
     )
 
 
-def make_task_fn(input_dir: str, output_dir: str):
+def make_task_fn(input_dir: str, output_dir: str, settings: Optional[dict] = None):
     """Return a 'partial' of 'tracked_process_file' bound to dirs.
 
     Using 'partial' rather than a lambda preserves picklability
     """
-    return partial(tracked_process_file, input_dir=input_dir, output_dir=output_dir)
+    return partial(
+        tracked_process_file,
+        input_dir=input_dir,
+        output_dir=output_dir,
+        settings=settings,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -262,6 +270,7 @@ def process_file(
     output_dir_root: str = "extracted_files",
     ocr_engine: Optional[OCREngine] = None,
     event_queue=None,
+    settings: Optional[dict] = None,
 ) -> FileResult:
     """Process a single PDF and return a 'FileResult'.
 
@@ -274,6 +283,7 @@ def process_file(
         output_dir_root: Root of the output directory tree.
         ocr_engine:      OCR engine to use; 'None' disables OCR entirely.
         event_queue:     Multiprocessing queue for page-done events.
+        settings:        Optional configuration overrides for processing.
 
     Returns:
         'FileResult' dataclass (always returned, never raises)
