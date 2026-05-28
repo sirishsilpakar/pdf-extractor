@@ -81,6 +81,29 @@ OCR_LOW_TEXT_LENGTH_THRESHOLD = 10
 
 _CURRENT_PATH = os.path.dirname(os.path.abspath(__file__))
 
+REMOVE_HEADERS = os.getenv("REMOVE_HEADERS", "false").lower() in ("1", "true", "yes")
+REMOVE_FOOTERS = os.getenv("REMOVE_FOOTERS", "false").lower() in ("1", "true", "yes")
+REMOVE_PAGE_NUMBERS = os.getenv("REMOVE_PAGE_NUMBERS", "false").lower() in (
+    "1",
+    "true",
+    "yes",
+)
+REMOVE_ALL_NUMBERS = os.getenv("REMOVE_ALL_NUMBERS", "false").lower() in (
+    "1",
+    "true",
+    "yes",
+)
+APPLY_TEXT_FORMATTING = os.getenv("APPLY_TEXT_FORMATTING", "true").lower() in (
+    "1",
+    "true",
+    "yes",
+)
+DEBUG_POST_PROCESS_FILE = os.getenv("DEBUG_POST_PROCESS_FILE", "false").lower() in (
+    "1",
+    "true",
+    "yes",
+)
+
 # SQLite database path — override with EXTRACTOR_DB_PATH env var
 DB_PATH = os.path.abspath(
     os.getenv("EXTRACTOR_DB_PATH", os.path.join(_CURRENT_PATH, "state.db"))
