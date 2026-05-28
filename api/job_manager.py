@@ -217,6 +217,7 @@ class JobManager:
                 db,
                 run_id,
                 timeout_seconds,
+                settings,
             ),
             daemon=True,
         )
@@ -480,6 +481,7 @@ class JobManager:
         db,
         run_id: str = "",
         timeout_seconds: int = 0,
+        settings: Optional[dict] = None,
     ) -> None:
         """Execute ``run_pipeline`` in a background daemon thread"""
         import logging as _logging
@@ -497,6 +499,7 @@ class JobManager:
                 db=db,
                 run_id=run_id or None,
                 total_timeout_seconds=timeout_seconds,
+                settings=settings,
             )
         except Exception as exc:
             _logging.exception("Pipeline thread crashed: %s", exc)
