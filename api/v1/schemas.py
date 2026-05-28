@@ -151,6 +151,7 @@ class ResultRecord(BaseModel):
     id: int
     run_id: Optional[str] = None
     run_started_at: Optional[str] = None
+    run_number: Optional[int] = None
     filename: str
     rel_path: str
     method: str
@@ -183,6 +184,7 @@ class RunRecord(BaseModel):
     )
     input_dir: Optional[str] = None
     log_path: Optional[str] = None  # absolute path to per-run activity log .txt
+    run_number: Optional[int] = None
 
 
 class ExtractedFileRecord(BaseModel):
@@ -248,6 +250,13 @@ class FileReferenceResponse(BaseModel):
     files: List[FileReferenceItem] = Field(
         default_factory=list,
         description="Detailed list of individual PDF files found under the path",
+    )
+
+
+class RunIdItem(BaseModel):
+    run_id: str
+    run_number: int
+
 
 class DirectoryNode(BaseModel):
     run_id: str

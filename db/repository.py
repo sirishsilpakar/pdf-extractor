@@ -438,13 +438,17 @@ class DatabaseRepository:
                 total = conn.execute("SELECT COUNT(*) FROM runs").fetchone()[0]
                 rows = conn.execute(
                     """
-                    SELECT run_id, started_at, completed_at, status,
+                    WITH run_nums AS (
+                        SELECT *, ROW_NUMBER() OVER (ORDER BY started_at ASC, run_id ASC) as run_number
+                        FROM runs
+                    )
+                    SELECT run_id, run_number, started_at, completed_at, status,
                            total_files, done_files, failed_files,
-                           direct_files, ocr_files, input_dir, log_path,
+                           direct_files, ocr_files, input_dir, log_path, output_dir,
                            ROUND(
                                (JULIANDAY(completed_at) - JULIANDAY(started_at)) * 86400
                            ) AS elapsed_seconds
-                    FROM runs
+                    FROM run_nums
                     ORDER BY started_at DESC
                     LIMIT ? OFFSET ?
                     """,
@@ -454,8 +458,8 @@ class DatabaseRepository:
             finally:
                 conn.close()
 
-    def get_all_run_ids(self, page: int = 1, size: int = 20) -> tuple[int, list[str]]:
-        """Return a paginated list of all run IDs """
+    def get_all_run_ids(self, page: int = 1, size: int = 20) -> tuple[int, list[dict]]:
+        """Return a paginated list of all run IDs with run numbers (newest first)"""
         offset = (page - 1) * size
         with self._lock:
             conn = self._connect()
@@ -463,11 +467,15 @@ class DatabaseRepository:
                 total = conn.execute("SELECT COUNT(*) FROM runs").fetchone()[0]
                 rows = conn.execute(
                     """
-                    SELECT run_id FROM runs ORDER BY started_at DESC LIMIT ? OFFSET ?
+                    WITH run_nums AS (
+                        SELECT run_id, ROW_NUMBER() OVER (ORDER BY started_at ASC, run_id ASC) as run_number
+                        FROM runs
+                    )
+                    SELECT run_id, run_number FROM run_nums ORDER BY run_number DESC LIMIT ? OFFSET ?
                     """,
                     (size, offset),
                 ).fetchall()
-                return total, [r for r in rows]
+                return total, [dict(r) for r in rows]
             finally:
                 conn.close()
 
@@ -478,13 +486,17 @@ class DatabaseRepository:
             try:
                 row = conn.execute(
                     """
-                    SELECT run_id, started_at, completed_at, status,
+                    WITH run_nums AS (
+                        SELECT *, ROW_NUMBER() OVER (ORDER BY started_at ASC, run_id ASC) as run_number
+                        FROM runs
+                    )
+                    SELECT run_id, run_number, started_at, completed_at, status,
                            total_files, done_files, failed_files,
-                           direct_files, ocr_files, input_dir, log_path,
+                           direct_files, ocr_files, input_dir, log_path, output_dir,
                            ROUND(
                                (JULIANDAY(completed_at) - JULIANDAY(started_at)) * 86400
                            ) AS elapsed_seconds
-                    FROM runs WHERE run_id = ?
+                    FROM run_nums WHERE run_id = ?
                     """,
                     (run_id,),
                 ).fetchone()
@@ -562,8 +574,13 @@ class DatabaseRepository:
 
                 dir_rows = conn.execute(
                     f"""
-                    SELECT e.run_id, dirname(e.rel_path) AS path, count(*) AS count, max(e.processed_at) as last_processed
+                    WITH run_nums AS (
+                        SELECT run_id, ROW_NUMBER() OVER (ORDER BY started_at ASC, run_id ASC) as run_number
+                        FROM runs
+                    )
+                    SELECT e.run_id, rn.run_number, dirname(e.rel_path) AS path, count(*) AS count, max(e.processed_at) as last_processed
                     FROM extracted_texts e
+                    LEFT JOIN run_nums rn ON rn.run_id = e.run_id
                     WHERE {where_clause}
                     GROUP BY e.run_id, path
                     ORDER BY last_processed DESC, path ASC
@@ -581,9 +598,15 @@ class DatabaseRepository:
 
                 top_files_rows = conn.execute(
                     f"""
+                    WITH run_nums AS (
+                        SELECT run_id, ROW_NUMBER() OVER (ORDER BY started_at ASC, run_id ASC) as run_number
+                        FROM runs
+                    )
                     SELECT e.id, e.filename, e.rel_path, e.method, e.char_count,
-                           e.page_count, e.content_hash, e.processed_at, e.confidence, e.flags, e.run_id
+                           e.page_count, e.content_hash, e.processed_at, e.confidence, e.flags, e.run_id,
+                           rn.run_number
                     FROM extracted_texts e
+                    LEFT JOIN run_nums rn ON rn.run_id = e.run_id
                     WHERE {top_where_clause}
                     ORDER BY e.processed_at DESC, e.filename ASC
                     LIMIT ? OFFSET ?
@@ -794,14 +817,19 @@ class DatabaseRepository:
                 ).fetchone()[0]
                 rows = conn.execute(
                     f"""
-                    SELECT e.id, e.run_id, e.source_path, e.filename, e.rel_path,
+                    WITH run_nums AS (
+                        SELECT run_id, ROW_NUMBER() OVER (ORDER BY started_at ASC, run_id ASC) as run_number
+                        FROM runs
+                    )
+                    SELECT e.id, e.run_id, rn.run_number, e.source_path, e.filename, e.rel_path,
                            e.txt_path, e.method, e.char_count, e.page_count,
                            e.content_hash, e.processed_at, e.confidence, e.flags,
                            r.started_at AS run_started_at
                     FROM extracted_texts e
                     LEFT JOIN runs r ON r.run_id = e.run_id
+                    LEFT JOIN run_nums rn ON rn.run_id = e.run_id
                     {where_sql}
-                    ORDER BY r.started_at DESC, r.run_id, e.processed_at DESC
+                    {order_sql}
                     LIMIT ? OFFSET ?
                     """,
                     params + [size, offset],

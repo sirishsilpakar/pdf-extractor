@@ -17,6 +17,7 @@ from api.v1.schemas import (
     ResultRecord,
     RunRecord,
     RunTreeResponse,
+    RunIdItem,
 )
 
 router = APIRouter()
@@ -46,7 +47,7 @@ async def list_runs(
     "/ids",
     response_model=PagedResponse[RunIdItem],
     summary="List all run IDs",
-    description="Returns a paginated list of all run IDs, newest first, for filtering",
+    description="Returns a paginated list of all run IDs with run numbers, newest first, for filtering",
 )
 async def list_run_ids(
     db: DBDep = ...,  # type: ignore[assignment]
@@ -58,7 +59,7 @@ async def list_run_ids(
         total=total,
         page=page,
         size=size,
-        items=[r for r in rows],
+        items=[RunIdItem(**r) for r in rows],
     )
 
 
