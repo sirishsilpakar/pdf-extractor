@@ -1,63 +1,13 @@
 import re
 
-
-class DocProfiler:
-    def __init__(self, threshold=0.75):
-        # 75% threshold means if it appears on 3/4 of the pages, it's a header/footer
-        self.threshold = threshold
-        self.noise_lines = set()
-
-    def profile_document(self, doc):
-        """
-        Analyzes the PyMuPDF document to find repeating headers/footers and page numbers.
-        """
-        line_counts = {}
-        total_pages = len(doc)
-        if total_pages == 0:
-            return
-
-        for page in doc:
-            page_height = page.rect.height
-            blocks = page.get_text("blocks")
-
-            # Use a set to prevent counting the same header twice on a single page
-            seen_on_page = set()
-
-            for b in blocks:
-                # b[1] is the top Y-coordinate, b[3] is the bottom Y-coordinate
-                y_pos = b[1]
-
-                # OPTIONAL SAFEGUARD: Only profile text in the top 15% or bottom 15% of the page
-                is_header_footer = (y_pos < page_height * 0.15) or (
-                    b[3] > page_height * 0.85
-                )
-                if not is_header_footer:
-                    continue
-
-                text = b[4].strip()
-                if not text:
-                    continue
-
-                # Process line by line instead of block by block
-                for line in text.splitlines():
-                    line = line.strip()
-                    if not line:
-                        continue
-
-                    # Normalize text: remove digits to catch shifting page numbers (e.g. "Page 1", "Page 2")
-                    norm_line = re.sub(r"\d+", "", line).strip()
-
-                    if norm_line and norm_line not in seen_on_page:
-                        seen_on_page.add(norm_line)
-                        line_counts[norm_line] = line_counts.get(norm_line, 0) + 1
-
-        # Save lines that meet the frequency threshold
-        self.noise_lines = {
-            text
-            for text, count in line_counts.items()
-            if count >= (total_pages * self.threshold)
-        }
-
+from config import (
+    APPLY_TEXT_FORMATTING,
+    DEBUG_POST_PROCESS_FILE,
+    REMOVE_ALL_NUMBERS,
+    REMOVE_FOOTERS,
+    REMOVE_HEADERS,
+    REMOVE_PAGE_NUMBERS,
+)
 
 RE_HYPHEN = re.compile(r"-\n")
 RE_WHITESP = re.compile(r"\s+")
@@ -88,7 +38,32 @@ RE_PAGE_PATTERN = [
 ]
 
 
+class DocumentSanitizer:
+    DEFAULT_CONFIG = {
+        "remove_header": REMOVE_HEADERS,
+        "remove_footer": REMOVE_FOOTERS,
+        "remove_page_numbers": REMOVE_PAGE_NUMBERS,
+        "remove_numeric_values": REMOVE_ALL_NUMBERS,
+        "apply_text_formatting": APPLY_TEXT_FORMATTING,
+        "debug_visualize": DEBUG_POST_PROCESS_FILE,
+        "debug_filename": None,
+    }
+
+    def __init__(self, config=None, threshold_ratio=0.75):
+        self.threshold_ratio = threshold_ratio
+        self.config = config or self.DEFAULT_CONFIG.copy()
+
+    def _get_bool_config(self, key, default=True):
+        """Return bool value for config"""
+        val = self.config.get(key, default)
+        if isinstance(val, str):
+            return val.lower() in ("1", "true", "yes", "on")
+        return bool(val)
+
 def preprocess_text(text, noise_list=None):
+    # Strip non-printable ASCII control characters (specifically \x07)
+    text = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f]", "", text)
+
     # Header footer noise
     if noise_list:
         lines = text.splitlines()
@@ -116,16 +91,13 @@ def preprocess_text(text, noise_list=None):
 
     # Replace fancy quotes with normal
     text = text.replace("“", '"').replace("”", '"').replace("’", "'")
-    # Remove ALL numbers (intentional by user)
 
     text = re.sub(r"__KEEP\d+__(.*?)__KEEP\d+__", r"\1", text)
     return text
 
 
 def remove_page_numbers(text):
-    """
-    Removes various page number formats.
-    """
+    """Removes various page number formats"""
     for pattern in RE_PAGE_PATTERN:
         text = pattern.sub("", text)
     return text

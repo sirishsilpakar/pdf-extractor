@@ -290,8 +290,6 @@ def process_file(
     """
     import core.transform as transform
 
-    profiler = transform.DocProfiler(threshold=0.5)
-
     start = time.time()
 
     try:
@@ -300,9 +298,6 @@ def process_file(
 
         with pymupdf.open(file_path) as doc:
             num_pages = doc.page_count
-
-            # Header footer profiler
-            profiler.profile_document(doc)
 
         basename = os.path.basename(file_path)
         pid = os.getpid()
@@ -410,9 +405,6 @@ def process_file(
             overall_confidence = 0.0
 
         # Write output files
-        final_text = transform.preprocess_text(
-            "".join(full_text_parts), profiler.noise_lines
-        )
         out_dir = os.path.join(output_dir_root, subfolder)
         out_txt = os.path.join(out_dir, base_name_no_ext + ".txt")
         out_meta = os.path.join(out_dir, base_name_no_ext + ".meta.json")
