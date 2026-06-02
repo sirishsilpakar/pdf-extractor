@@ -173,7 +173,10 @@ def process_page(
             if should_ocr:
                 meta["reason"] = "high_image_ratio"
             else:
-                text = page.get_text("text")
+                # Get the text content along with the page dict for post processing
+                # sort=True is used to get the text content in the correct order
+                text = page.get_text("text", sort=True)
+                meta["page_dict"] = page.get_text("dict", sort=True)
                 if (
                     len(text.strip()) < OCR_LOW_TEXT_LENGTH_THRESHOLD
                     and not disable_ocr
@@ -200,6 +203,8 @@ def process_page(
                     text = result.text
                     if result.confidence is not None:
                         meta["confidence"] = result.confidence
+                    if hasattr(result, "page_dict") and result.page_dict:
+                        meta["page_dict"] = result.page_dict
 
             meta["char_count"] = len(text)
 
@@ -331,12 +336,29 @@ def process_file(
         # Aggregate
         full_text_parts: list[str] = []
         metadata_report: list[dict] = []
+        page_dicts: list[dict] = []
         ocr_count = direct_count = 0
 
         for i, res in enumerate(results):
             if res is None:
                 continue
             txt, method, meta = res
+
+            page_dict = meta.pop("page_dict", None)
+            if page_dict:
+                page_dicts.append(page_dict)
+            else:
+                # In case the page_dict is not available, we append a default page_dict
+                # This can happen if the OCR engine is not able to extract the page_dict
+                page_dicts.append(
+                    {
+                        "height": 0,
+                        "blocks": [
+                            {"type": 0, "lines": [{"bbox": [0, 0, 0, 0], "text": txt}]}
+                        ],
+                    }
+                )
+
             full_text_parts.append(txt)
             metadata_report.append({"page": i + 1, "method": method, "metadata": meta})
             if method == ExtractionMethod.OCR.value:
