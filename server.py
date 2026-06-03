@@ -5,7 +5,8 @@ Imports ``create_app`` from ``api.app`` (all application configuration is presen
 CLI flags
 ---------
 --port N      Listen on port N (default: SERVER_PORT env var, fallback 8080)
---no-ui       Skip mounting the static React UI assets (API-only / headless mode)
+--ui          Serve the static React UI assets alongside the API
+--mode MODE   Environment mode: 'dev' (incremental ports) or 'prod' (OS-allocated port)
 """
 
 from __future__ import annotations
@@ -53,9 +54,15 @@ def _parse_args() -> argparse.Namespace:
         help="Port to listen on (overrides SERVER_PORT env var)",
     )
     parser.add_argument(
-        "--no-ui",
+        "--ui",
         action="store_true",
-        help="Start without serving the static React UI (API-only / headless mode)",
+        help="Serve the static React UI (headless/no-ui by default)",
+    )
+    parser.add_argument(
+        "--mode",
+        choices=["dev", "prod"],
+        default=None,
+        help="Environment mode: 'dev' (incremental ports) or 'prod' (OS allocated port)",
     )
     return parser.parse_args()
 
@@ -64,16 +71,30 @@ def start() -> None:
     args = _parse_args()
 
     # CLI flags win over env vars, env vars win over built-in defaults
-    if args.no_ui:
-        os.environ["SERVE_UI"] = "false"
+    # By default, we do not serve the UI unless the --ui flag is passed or SERVE_UI is explicitly set to true
+    if args.ui:
+        os.environ["SERVE_UI"] = "true"
+    else:
+        # Default to false unless overridden by the env var already
+        if "SERVE_UI" not in os.environ:
+            os.environ["SERVE_UI"] = "false"
+
+    # Determine dev vs prod mode
+    # If mode is not specified via CLI, detect it from sys.frozen or APP_ENV
+    mode_cli = args.mode
+    is_prod = False
+    if mode_cli == "prod":
+        is_prod = True
+    elif mode_cli == "dev":
+        is_prod = False
+    else:
+        is_prod = getattr(sys, "frozen", False) or os.getenv("APP_ENV") == "production"
 
     # Import config after env mutations so values are picked up correctly
-    from config import SERVE_UI, SERVER_PORT  # noqa: E402 — intentional late import
+    from config import SERVE_UI, SERVER_PORT  # noqa: E402 - intentional late import
 
-    port = args.port if args.port is not None else SERVER_PORT
-
-    mode = "headless (API only)" if not SERVE_UI else "full (UI + API)"
-    print(f"[server] Starting in {mode} mode on port {port}")
+    mode = "full (UI + API)" if SERVE_UI else "headless (API only)"
+    print(f"[server] Starting in {mode} mode on port {SERVER_PORT}")
 
     import uvicorn  # noqa: E402
 
