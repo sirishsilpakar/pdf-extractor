@@ -12,11 +12,33 @@ from __future__ import annotations
 
 import argparse
 import os
+import socket
 import sys
 from pathlib import Path
 
 # Ensure project root is on sys.path when run as a script
 sys.path.insert(0, str(Path(__file__).parent))
+
+
+def find_free_port(start_port: int, max_attempts: int = 100) -> int:
+    """Finds an available TCP port starting from start_port incrementally"""
+    for port in range(start_port, start_port + max_attempts):
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            try:
+                s.bind(("127.0.0.1", port))
+                return port
+            except OSError:
+                continue
+    raise RuntimeError(
+        f"Could not find a free port in range {start_port} to {start_port + max_attempts}"
+    )
+
+
+def get_os_allocated_port() -> int:
+    """Asks the OS to allocate a free ephemeral port by binding to port 0"""
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.bind(("127.0.0.1", 0))
+        return s.getsockname()[1]
 
 
 def _parse_args() -> argparse.Namespace:
