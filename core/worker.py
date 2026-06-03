@@ -24,11 +24,17 @@ import pymupdf
 from PIL import Image
 
 from config import (
+    APPLY_TEXT_FORMATTING,
+    DEBUG_POST_PROCESS_FILE,
     ENABLE_PAGE_LEVEL_OCR_THREADS,
     OCR_DPI,
     OCR_LOW_TEXT_LENGTH_THRESHOLD,
     OCR_ON_IMAGE_AREA_THRESHOLD,
     PAGE_LEVEL_OCR_MAX_WORKERS,
+    REMOVE_ALL_NUMBERS,
+    REMOVE_FOOTERS,
+    REMOVE_HEADERS,
+    REMOVE_PAGE_NUMBERS,
 )
 from core.events import (
     ExtractionMethod,
@@ -432,6 +438,30 @@ def process_file(
         out_meta = os.path.join(out_dir, base_name_no_ext + ".meta.json")
 
         os.makedirs(os.path.dirname(out_txt), exist_ok=True)
+
+        # For post processing set the default config from env var
+        sanitizer_config = {
+            "remove_header": REMOVE_HEADERS,
+            "remove_footer": REMOVE_FOOTERS,
+            "remove_page_numbers": REMOVE_PAGE_NUMBERS,
+            "remove_numeric_values": REMOVE_ALL_NUMBERS,
+            "apply_text_formatting": APPLY_TEXT_FORMATTING,
+            "debug_visualize": DEBUG_POST_PROCESS_FILE,
+            "debug_filename": os.path.join(out_dir, base_name_no_ext + "_debug.html"),
+        }
+        if settings:
+            sanitizer_config.update(settings)
+
+        sanitizer = transform.DocumentSanitizer(config=sanitizer_config)
+
+        # Sanitize / post process the page based on the page_dict
+        # Which uses the bbox information of the text elements to remove headers, footers and page numbers
+        # Then join the final cleaned pages for the final extracted text
+        clean_pages = sanitizer.process_pages(page_dicts)
+        join_char = (
+            " " if sanitizer._get_bool_config("apply_text_formatting") else "\n\n"
+        )
+        final_text = join_char.join(clean_pages)
 
         with open(out_txt, "w", encoding="utf-8") as fh:
             fh.write(final_text)

@@ -9,6 +9,7 @@ Keeping all schemas in one place to:
 from __future__ import annotations
 
 import math
+import re
 from typing import Any, Generic, List, Optional, TypeVar
 
 from pydantic import BaseModel, Field, field_validator
@@ -101,6 +102,16 @@ class StartJobRequest(BaseModel):
         default=None,
         description="Optional global timeout for the entire job in seconds.",
     )
+
+    @field_validator("settings", mode="before")
+    @classmethod
+    def normalise_settings_casing(cls, v: object) -> Optional[dict]:
+        """Normalise settings dictionary keys from camelCase to snake_case"""
+        if isinstance(v, dict):
+            return {
+                re.sub(r"(?<!^)(?=[A-Z])", "_", k).lower(): val for k, val in v.items()
+            }
+        return v
 
     @field_validator("file_ids", "batch_ids", mode="before")
     @classmethod
