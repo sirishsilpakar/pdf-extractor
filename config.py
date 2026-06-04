@@ -81,7 +81,7 @@ OCR_LOW_TEXT_LENGTH_THRESHOLD = 10
 
 _CURRENT_PATH = os.path.dirname(os.path.abspath(__file__))
 
-# SQLite database path — override with EXTRACTOR_DB_PATH env var
+# SQLite database path - override with EXTRACTOR_DB_PATH env var
 DB_PATH = os.path.abspath(
     os.getenv("EXTRACTOR_DB_PATH", os.path.join(_CURRENT_PATH, "state.db"))
 )
@@ -126,8 +126,8 @@ RAM_PER_WORKER_MB: int = int(os.getenv("RAM_PER_WORKER_MB", "800"))
 SERVER_PORT: int = int(os.getenv("SERVER_PORT", "8080"))
 
 # When set to false (0/false/no), the server skips mounting the static UI
-# assets and the GET / route — useful for headless / API-only deployments
-SERVE_UI: bool = os.getenv("SERVE_UI", "true").lower() not in ("0", "false", "no")
+# assets and the GET / route - useful for headless / API-only deployments
+SERVE_UI: bool = os.getenv("SERVE_UI", "false").lower() not in ("0", "false", "no")
 
 # Directory for per-run activity logs (<LOG_RUNS_DIR>/<run_id>.txt)
 LOG_RUNS_DIR: str = os.path.abspath(os.path.join(LOG_DIR, "runs"))

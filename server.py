@@ -12,6 +12,7 @@ CLI flags
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import socket
 import sys
@@ -90,6 +91,34 @@ def start() -> None:
     else:
         is_prod = getattr(sys, "frozen", False) or os.getenv("APP_ENV") == "production"
 
+    default_port_env = int(os.getenv("SERVER_PORT", "8080"))
+    default_port = args.port if args.port is not None else default_port_env
+
+    # Find the port to bind to
+    if is_prod:
+        # Production uses an OS allocated port (port 0)
+        try:
+            port = get_os_allocated_port()
+            print(f"[server] Production mode: OS-allocated port {port}")
+        except RuntimeError as e:
+            print(f"[server] Error finding OS-allocated port: {e}")
+            sys.exit(1)
+    else:
+        # Development scans ports incrementally starting from default_port
+        try:
+            port = find_free_port(default_port)
+            if port != default_port:
+                print(
+                    f"[server] Port {default_port} in use. Incrementing to find free port..."
+                )
+            print(f"[server] Development mode: Bound to port {port}")
+        except RuntimeError as e:
+            print(f"[server] Error finding free port: {e}")
+            sys.exit(1)
+
+    # Write the final resolved port back to environment variable so config and lifespan pick it up
+    os.environ["SERVER_PORT"] = str(port)
+
     # Import config after env mutations so values are picked up correctly
     from config import SERVE_UI, SERVER_PORT  # noqa: E402 - intentional late import
 
@@ -101,13 +130,34 @@ def start() -> None:
     from api.app import create_app  # noqa: E402
 
     application = create_app()
-    uvicorn.run(
-        application,
-        host="0.0.0.0",
-        port=port,
-        reload=False,
-        log_level="info",
-    )
+
+    if is_prod:
+        # Production env uses user configuration folder to avoid permissions/signing issues
+        app_dir = Path.home() / ".pdf-extractor"
+        app_dir.mkdir(parents=True, exist_ok=True)
+        port_file = app_dir / "port.json"
+    else:
+        # Development env uses local directory
+        port_file = Path(__file__).parent / "port.json"
+
+    try:
+        # Write port information to port.json for client discovery
+        with open(port_file, "w") as f:
+            json.dump({"port": port, "pid": os.getpid()}, f)
+
+        uvicorn.run(
+            application,
+            host="0.0.0.0",
+            port=port,
+            reload=False,
+            log_level="info",
+        )
+    finally:
+        try:
+            if port_file.exists():
+                port_file.unlink()
+        except Exception:
+            pass
 
 
 if __name__ == "__main__":
