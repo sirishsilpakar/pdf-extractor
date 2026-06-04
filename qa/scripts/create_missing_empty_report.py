@@ -43,13 +43,11 @@ def qa_check_with_report(
     txt_files = list(output_txt_path.rglob("*.txt"))
 
     pdf_basenames = {
-        str(pdf.relative_to(input_pdf_path).with_suffix(""))
-        for pdf in pdf_files
+        str(pdf.relative_to(input_pdf_path).with_suffix("")) for pdf in pdf_files
     }
 
     txt_basenames = {
-        str(txt.relative_to(output_txt_path).with_suffix(""))
-        for txt in txt_files
+        str(txt.relative_to(output_txt_path).with_suffix("")) for txt in txt_files
     }
 
     missing_txt = sorted(pdf_basenames - txt_basenames)
