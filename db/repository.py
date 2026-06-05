@@ -572,23 +572,10 @@ class DatabaseRepository:
                     params,
                 ).fetchone()[0]
 
-                dir_rows = conn.execute(
-                    f"""
-                    WITH run_nums AS (
-                        SELECT run_id, ROW_NUMBER() OVER (ORDER BY started_at ASC, run_id ASC) as run_number
-                        FROM runs
-                    )
-                    SELECT e.run_id, rn.run_number, dirname(e.rel_path) AS path, count(*) AS count, max(e.processed_at) as last_processed
-                    FROM extracted_texts e
-                    LEFT JOIN run_nums rn ON rn.run_id = e.run_id
-                    WHERE {where_clause}
-                    GROUP BY e.run_id, path
-                    ORDER BY last_processed DESC, path ASC
-                    LIMIT ? OFFSET ?
-                    """,
-                    params + [size, offset],
-                ).fetchall()
-                dirs = [dict(r) for r in dir_rows]
+                total_files_in_dirs = conn.execute(
+                    f"SELECT COUNT(*) FROM extracted_texts e WHERE {where_clause}",
+                    params,
+                ).fetchone()[0]
 
                 # Paginated top level files
                 total_top_files = conn.execute(
@@ -621,6 +608,7 @@ class DatabaseRepository:
                     "top_level_files_total": total_top_files,
                     "page": page,
                     "size": size,
+                    "total": total_top_files + total_files_in_dirs
                 }
             finally:
                 conn.close()

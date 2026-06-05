@@ -272,6 +272,7 @@ class RunTreeResponse(BaseModel):
     page: int
     size: int
     pages: int
+    total: int
 
     @classmethod
     def build(cls, data: dict) -> "RunTreeResponse":
@@ -280,8 +281,8 @@ class RunTreeResponse(BaseModel):
         size = data["size"]
         dirs_total = data["directories_total"]
         files_total = data["top_level_files_total"]
-        max_total = max(dirs_total, files_total)
-        pages = max(1, math.ceil(max_total / size) if size > 0 else 1)
+        combined_total = dirs_total + files_total
+        pages = max(1, math.ceil(combined_total / size) if size > 0 else 1)
         return cls(
             directories=data["directories"],
             directories_total=dirs_total,
@@ -290,4 +291,5 @@ class RunTreeResponse(BaseModel):
             page=data["page"],
             size=size,
             pages=pages,
+            total=data["total"]
         )
