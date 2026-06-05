@@ -577,29 +577,97 @@ class DatabaseRepository:
                     params,
                 ).fetchone()[0]
 
-                # Paginated top level files
                 total_top_files = conn.execute(
                     f"SELECT COUNT(*) FROM extracted_texts e WHERE {top_where_clause}",
                     params,
                 ).fetchone()[0]
 
-                top_files_rows = conn.execute(
-                    f"""
-                    WITH run_nums AS (
-                        SELECT run_id, ROW_NUMBER() OVER (ORDER BY started_at ASC, run_id ASC) as run_number
-                        FROM runs
-                    )
-                    SELECT e.id, e.filename, e.rel_path, e.method, e.char_count,
-                           e.page_count, e.content_hash, e.processed_at, e.confidence, e.flags, e.run_id,
-                           rn.run_number
-                    FROM extracted_texts e
-                    LEFT JOIN run_nums rn ON rn.run_id = e.run_id
-                    WHERE {top_where_clause}
-                    ORDER BY e.processed_at DESC, e.filename ASC
-                    LIMIT ? OFFSET ?
-                    """,
-                    params + [size, offset],
-                ).fetchall()
+                dirs = []
+                top_files_rows = []
+
+                # Check to see whether to fetch only directories or to include the top level files
+                if offset < total_dirs:
+                    dirs_to_fetch = min(size, total_dirs - offset)
+                    dir_rows = conn.execute(
+                        f"""
+                        WITH run_nums AS (
+                            SELECT run_id, ROW_NUMBER() OVER (ORDER BY started_at ASC, run_id ASC) as run_number
+                            FROM runs
+                        ),
+                        dir_runs AS (
+                            SELECT dirname(rel_path) AS path, COUNT(DISTINCT run_id) AS run_count
+                            FROM extracted_texts
+                            WHERE instr(rel_path, '/') > 0
+                            GROUP BY path
+                        )
+                        SELECT e.run_id, rn.run_number, dirname(e.rel_path) AS path, count(*) AS count, max(e.processed_at) as last_processed,
+                               CASE WHEN dr.run_count > 1 THEN 1 ELSE 0 END AS has_duplicate
+                        FROM extracted_texts e
+                        LEFT JOIN run_nums rn ON rn.run_id = e.run_id
+                        LEFT JOIN dir_runs dr ON dr.path = dirname(e.rel_path)
+                        WHERE {where_clause}
+                        GROUP BY e.run_id, path
+                        ORDER BY last_processed DESC, path ASC
+                        LIMIT ? OFFSET ?
+                        """,
+                        params + [dirs_to_fetch, offset],
+                    ).fetchall()
+                    dirs = [dict(r) for r in dir_rows]
+
+                    remaining_size = size - dirs_to_fetch
+
+                    # Directories don't take up the full page size so check if there are top level files to fetch
+                    if remaining_size > 0:
+                        top_files_rows = conn.execute(
+                            f"""
+                            WITH run_nums AS (
+                                SELECT run_id, ROW_NUMBER() OVER (ORDER BY started_at ASC, run_id ASC) as run_number
+                                FROM runs
+                            ),
+                            file_runs AS (
+                                SELECT rel_path, COUNT(DISTINCT run_id) AS run_count
+                                FROM extracted_texts
+                                GROUP BY rel_path
+                            )
+                            SELECT e.id, e.filename, e.rel_path, e.method, e.char_count,
+                                   e.page_count, e.content_hash, e.processed_at, e.confidence, e.flags, e.run_id,
+                                   rn.run_number,
+                                   CASE WHEN fr.run_count > 1 THEN 1 ELSE 0 END AS has_duplicate
+                            FROM extracted_texts e
+                            LEFT JOIN run_nums rn ON rn.run_id = e.run_id
+                            LEFT JOIN file_runs fr ON fr.rel_path = e.rel_path
+                            WHERE {top_where_clause}
+                            ORDER BY e.processed_at DESC, e.filename ASC
+                            LIMIT ? OFFSET 0
+                            """,
+                            params + [remaining_size],
+                        ).fetchall()
+                else:
+                    file_offset = offset - total_dirs
+                    top_files_rows = conn.execute(
+                        f"""
+                        WITH run_nums AS (
+                            SELECT run_id, ROW_NUMBER() OVER (ORDER BY started_at ASC, run_id ASC) as run_number
+                            FROM runs
+                        ),
+                        file_runs AS (
+                            SELECT rel_path, COUNT(DISTINCT run_id) AS run_count
+                            FROM extracted_texts
+                            GROUP BY rel_path
+                        )
+                        SELECT e.id, e.filename, e.rel_path, e.method, e.char_count,
+                               e.page_count, e.content_hash, e.processed_at, e.confidence, e.flags, e.run_id,
+                               rn.run_number,
+                               CASE WHEN fr.run_count > 1 THEN 1 ELSE 0 END AS has_duplicate
+                        FROM extracted_texts e
+                        LEFT JOIN run_nums rn ON rn.run_id = e.run_id
+                        LEFT JOIN file_runs fr ON fr.rel_path = e.rel_path
+                        WHERE {top_where_clause}
+                        ORDER BY e.processed_at DESC, e.filename ASC
+                        LIMIT ? OFFSET ?
+                        """,
+                        params + [size, file_offset],
+                    ).fetchall()
 
                 return {
                     "directories": dirs,
@@ -608,7 +676,7 @@ class DatabaseRepository:
                     "top_level_files_total": total_top_files,
                     "page": page,
                     "size": size,
-                    "total": total_top_files + total_files_in_dirs
+                    "total": total_top_files + total_files_in_dirs,
                 }
             finally:
                 conn.close()
@@ -831,7 +899,24 @@ class DatabaseRepository:
             conn = self._connect()
             try:
                 row = conn.execute(
-                    "SELECT * FROM extracted_texts WHERE id=?", (record_id,)
+                    """
+                    WITH run_nums AS (
+                        SELECT run_id, ROW_NUMBER() OVER (ORDER BY started_at ASC, run_id ASC) as run_number
+                        FROM runs
+                    ),
+                    file_runs AS (
+                        SELECT rel_path, COUNT(DISTINCT run_id) AS run_count
+                        FROM extracted_texts
+                        GROUP BY rel_path
+                    )
+                    SELECT e.*, rn.run_number,
+                           CASE WHEN fr.run_count > 1 THEN 1 ELSE 0 END AS has_duplicate
+                    FROM extracted_texts e
+                    LEFT JOIN run_nums rn ON rn.run_id = e.run_id
+                    LEFT JOIN file_runs fr ON fr.rel_path = e.rel_path
+                    WHERE e.id = ?
+                    """,
+                    (record_id,),
                 ).fetchone()
                 return dict(row) if row else None
             finally:

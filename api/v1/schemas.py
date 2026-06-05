@@ -160,6 +160,7 @@ class ResultRecord(BaseModel):
     processed_at: str
     confidence: Optional[float] = None
     flags: Optional[str] = None
+    has_duplicate: bool = False
 
 
 class ResultDetail(ResultRecord):
@@ -260,8 +261,10 @@ class RunIdItem(BaseModel):
 
 class DirectoryNode(BaseModel):
     run_id: str
+    run_number: Optional[int] = None
     path: str
     count: int
+    has_duplicate: bool = False
 
 
 class RunTreeResponse(BaseModel):
