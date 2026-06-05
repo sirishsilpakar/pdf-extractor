@@ -849,11 +849,8 @@ class DatabaseRepository:
             where_clauses.append("e.run_id = ?")
             params.append(run_id)
         if rel_path_prefix is not None:
-            if rel_path_prefix == "":
-                where_clauses.append("instr(e.rel_path, '/') = 0")
-            else:
-                where_clauses.append("e.rel_path LIKE ?")
-                params.append(f"{rel_path_prefix.rstrip('/')}/%")
+            where_clauses.append("dirname(e.rel_path) = ?")
+            params.append(rel_path_prefix)
 
         where_sql = ""
         if where_clauses:
@@ -876,14 +873,21 @@ class DatabaseRepository:
                     WITH run_nums AS (
                         SELECT run_id, ROW_NUMBER() OVER (ORDER BY started_at ASC, run_id ASC) as run_number
                         FROM runs
+                    ),
+                    file_runs AS (
+                        SELECT rel_path, COUNT(DISTINCT run_id) AS run_count
+                        FROM extracted_texts
+                        GROUP BY rel_path
                     )
                     SELECT e.id, e.run_id, rn.run_number, e.source_path, e.filename, e.rel_path,
                            e.txt_path, e.method, e.char_count, e.page_count,
                            e.content_hash, e.processed_at, e.confidence, e.flags,
-                           r.started_at AS run_started_at
+                           r.started_at AS run_started_at,
+                           CASE WHEN fr.run_count > 1 THEN 1 ELSE 0 END AS has_duplicate
                     FROM extracted_texts e
                     LEFT JOIN runs r ON r.run_id = e.run_id
                     LEFT JOIN run_nums rn ON rn.run_id = e.run_id
+                    LEFT JOIN file_runs fr ON fr.rel_path = e.rel_path
                     {where_sql}
                     {order_sql}
                     LIMIT ? OFFSET ?

@@ -169,7 +169,7 @@ def test_save_returns_id(tmp_db):
         content_hash="h1",
     )
     assert isinstance(rid, int) and rid > 0
-    # Upsert same filename — should return the existing row id
+    # Upsert same filename - should return the existing row id
     rid2 = tmp_db.save_extracted_text(
         source_path="/a.pdf",
         filename="a.pdf",
@@ -333,3 +333,160 @@ def test_schema_migration_is_idempotent(tmp_db):
     """Running init_schema multiple times must not raise"""
     tmp_db.init_schema()
     tmp_db.init_schema()
+
+
+def test_get_extracted_texts_directory_filtering(tmp_db):
+    # Save a direct parent file
+    tmp_db.save_extracted_text(
+        source_path="/path/parent/a.pdf",
+        filename="a.pdf",
+        rel_path="parent/a.pdf",
+        txt_path="/out/parent/a.txt",
+        method="direct",
+        char_count=100,
+        page_count=1,
+        content_hash="h-parent",
+    )
+    # Save a nested subdirectory file
+    tmp_db.save_extracted_text(
+        source_path="/path/parent/sub/b.pdf",
+        filename="b.pdf",
+        rel_path="parent/sub/b.pdf",
+        txt_path="/out/parent/sub/b.txt",
+        method="direct",
+        char_count=100,
+        page_count=1,
+        content_hash="h-sub",
+    )
+    # Save a root file
+    tmp_db.save_extracted_text(
+        source_path="/path/c.pdf",
+        filename="c.pdf",
+        rel_path="c.pdf",
+        txt_path="/out/c.txt",
+        method="direct",
+        char_count=100,
+        page_count=1,
+        content_hash="h-root",
+    )
+
+    # Filter by empty string (root folder)
+    total_root, items_root = tmp_db.get_extracted_texts(rel_path_prefix="")
+    assert total_root == 1
+    assert items_root[0]["filename"] == "c.pdf"
+
+    # Filter by "parent" folder
+    total_parent, items_parent = tmp_db.get_extracted_texts(rel_path_prefix="parent")
+    assert total_parent == 1
+    assert items_parent[0]["filename"] == "a.pdf"
+
+    # Filter by "parent/sub" folder
+    total_sub, items_sub = tmp_db.get_extracted_texts(rel_path_prefix="parent/sub")
+    assert total_sub == 1
+    assert items_sub[0]["filename"] == "b.pdf"
+
+
+def test_has_duplicate_flag(tmp_db):
+    # Save runs
+    tmp_db.create_run(run_id="run-1", total_files=2)
+    tmp_db.create_run(run_id="run-2", total_files=2)
+
+    # File 1 is processed in both run 1 and run 2 (duplicate)
+    tmp_db.save_extracted_text(
+        source_path="/path1/dup.pdf",
+        filename="dup.pdf",
+        rel_path="dup.pdf",
+        txt_path="/out1/dup.txt",
+        method="direct",
+        char_count=100,
+        page_count=1,
+        content_hash="h-dup1",
+        run_id="run-1",
+    )
+    tmp_db.save_extracted_text(
+        source_path="/path2/dup.pdf",
+        filename="dup.pdf",
+        rel_path="dup.pdf",
+        txt_path="/out2/dup.txt",
+        method="direct",
+        char_count=100,
+        page_count=1,
+        content_hash="h-dup2",
+        run_id="run-2",
+    )
+
+    # File 2 is processed only in run 1 (no duplicate)
+    tmp_db.save_extracted_text(
+        source_path="/path1/unique.pdf",
+        filename="unique.pdf",
+        rel_path="unique.pdf",
+        txt_path="/out1/unique.txt",
+        method="direct",
+        char_count=100,
+        page_count=1,
+        content_hash="h-uniq",
+        run_id="run-1",
+    )
+
+    # Directory 1 is processed in both run 1 and run 2 (duplicate directory)
+    tmp_db.save_extracted_text(
+        source_path="/path1/dir/file_a.pdf",
+        filename="file_a.pdf",
+        rel_path="dir/file_a.pdf",
+        txt_path="/out1/dir/file_a.txt",
+        method="direct",
+        char_count=100,
+        page_count=1,
+        content_hash="h-dir1",
+        run_id="run-1",
+    )
+    tmp_db.save_extracted_text(
+        source_path="/path2/dir/file_b.pdf",
+        filename="file_b.pdf",
+        rel_path="dir/file_b.pdf",
+        txt_path="/out2/dir/file_b.txt",
+        method="direct",
+        char_count=100,
+        page_count=1,
+        content_hash="h-dir2",
+        run_id="run-2",
+    )
+
+    # Directory 2 is processed only in run 1 (unique directory)
+    tmp_db.save_extracted_text(
+        source_path="/path1/unique_dir/file_c.pdf",
+        filename="file_c.pdf",
+        rel_path="unique_dir/file_c.pdf",
+        txt_path="/out1/unique_dir/file_c.txt",
+        method="direct",
+        char_count=100,
+        page_count=1,
+        content_hash="h-dir3",
+        run_id="run-1",
+    )
+
+    # Assertions on get_extracted_texts
+    _, items = tmp_db.get_extracted_texts(size=10)
+    item_map = {item["filename"]: item for item in items}
+    assert item_map["dup.pdf"]["has_duplicate"] == 1
+    assert item_map["unique.pdf"]["has_duplicate"] == 0
+
+    # Assertions on get_run_tree (folders and top-level files)
+    tree = tmp_db.get_run_tree(size=10)
+
+    dir_map = {d["path"]: d for d in tree["directories"]}
+    assert dir_map["dir"]["has_duplicate"] == 1
+    assert dir_map["unique_dir"]["has_duplicate"] == 0
+
+    top_file_map = {f["filename"]: f for f in tree["top_level_files"]}
+    assert top_file_map["dup.pdf"]["has_duplicate"] == 1
+    assert top_file_map["unique.pdf"]["has_duplicate"] == 0
+
+    # Assertions on get_by_id
+    dup_id = item_map["dup.pdf"]["id"]
+    dup_record = tmp_db.get_by_id(dup_id)
+    assert dup_record["has_duplicate"] == 1
+
+    uniq_id = item_map["unique.pdf"]["id"]
+    uniq_record = tmp_db.get_by_id(uniq_id)
+    assert uniq_record["has_duplicate"] == 0

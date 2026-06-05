@@ -71,7 +71,7 @@ def _configure_logging(log_dir: str) -> None:
     logging.basicConfig(
         filename=log_path,
         level=logging.INFO,
-        format="%(asctime)s %(levelname)s %(name)s — %(message)s",
+        format="%(asctime)s %(levelname)s %(name)s - %(message)s",
         force=True,
     )
 
