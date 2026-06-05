@@ -196,6 +196,29 @@ def test_create_and_get_run(tmp_db):
     assert row["total_files"] == 10
 
 
+def test_run_number_table_column(tmp_db):
+    num1 = tmp_db.get_next_run_number()
+    assert num1 == 1
+
+    tmp_db.create_run(run_id="run-1", total_files=5)
+    row1 = tmp_db.get_run("run-1")
+    assert row1["run_number"] == 1
+
+    num2 = tmp_db.get_next_run_number()
+    assert num2 == 2
+
+    tmp_db.create_run(run_id="run-2", total_files=10)
+    row2 = tmp_db.get_run("run-2")
+    assert row2["run_number"] == 2
+
+    total, runs = tmp_db.get_runs()
+    assert total == 2
+    assert runs[0]["run_id"] == "run-2"
+    assert runs[0]["run_number"] == 2
+    assert runs[1]["run_id"] == "run-1"
+    assert runs[1]["run_number"] == 1
+
+
 def test_update_run_with_method_counts(tmp_db):
     tmp_db.create_run(run_id="run-xyz", total_files=5)
     tmp_db.update_run(
@@ -471,8 +494,8 @@ def test_has_duplicate_flag(tmp_db):
     assert item_map["dup.pdf"]["has_duplicate"] == 1
     assert item_map["unique.pdf"]["has_duplicate"] == 0
 
-    # Assertions on get_run_tree (folders and top-level files)
-    tree = tmp_db.get_run_tree(size=10)
+    # Assertions on get_result_tree (folders and top-level files)
+    tree = tmp_db.get_result_tree(size=10)
 
     dir_map = {d["path"]: d for d in tree["directories"]}
     assert dir_map["dir"]["has_duplicate"] == 1

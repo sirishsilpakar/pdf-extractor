@@ -15,9 +15,9 @@ from api.v1.deps import DBDep
 from api.v1.schemas import (
     PagedResponse,
     ResultRecord,
+    ResultTreeResponse,
     RunIdItem,
     RunRecord,
-    RunTreeResponse,
 )
 
 router = APIRouter()
@@ -80,21 +80,21 @@ async def get_run(
 
 @router.get(
     "/{run_id}/tree",
-    response_model=RunTreeResponse,
+    response_model=ResultTreeResponse,
     summary="Get directory and file tree for a run",
     description="Returns a structural breakdown of the run (directories and top-level files)",
 )
 async def get_run_tree(
     run_id: str,
     db: DBDep = ...,  # type: ignore[assignment]
-) -> RunTreeResponse:
+) -> ResultTreeResponse:
     if not db.get_run(run_id):
         raise HTTPException(404, detail=f"Run {run_id!r} not found.")
-    tree = db.get_run_tree(run_id)
+    tree = db.get_result_tree(run_id)
 
     tree["top_level_files"] = [ResultRecord(**r) for r in tree["top_level_files"]]
 
-    return RunTreeResponse.build(tree)
+    return ResultTreeResponse.build(tree)
 
 
 @router.get(

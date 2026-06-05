@@ -164,6 +164,20 @@ _MIGRATIONS: dict[int, list[str]] = {
         "CREATE INDEX IF NOT EXISTS idx_et_filename ON extracted_texts(filename)",
         "CREATE INDEX IF NOT EXISTS idx_et_hash ON extracted_texts(content_hash)",
     ],
+    17: [
+        "ALTER TABLE runs ADD COLUMN run_number INTEGER DEFAULT NULL",
+        """
+        UPDATE runs
+        SET run_number = (
+            SELECT rn
+            FROM (
+                SELECT run_id, ROW_NUMBER() OVER (ORDER BY started_at ASC, run_id ASC) as rn
+                FROM runs
+            ) r
+            WHERE r.run_id = runs.run_id
+        )
+        """,
+    ],
 }
 
 
@@ -346,24 +360,49 @@ class DatabaseRepository:
     # runs table
     # ------------------------------------------------------------------
 
+    def get_next_run_number(self) -> int:
+        """Get the next sequential run number from runs table"""
+        with self._lock:
+            conn = self._connect()
+            try:
+                row = conn.execute(
+                    "SELECT COALESCE(MAX(run_number), 0) + 1 FROM runs"
+                ).fetchone()
+                return row[0] if row else 1
+            finally:
+                conn.close()
+
     def create_run(
         self,
         run_id: str,
         total_files: int,
         input_dir: str = "",
         settings: str = "",
+        run_number: Optional[int] = None,
     ) -> None:
         """Insert a new run record with status='running'"""
         with self._lock:
             conn = self._connect()
             try:
+                if run_number is None:
+                    row = conn.execute(
+                        "SELECT COALESCE(MAX(run_number), 0) + 1 FROM runs"
+                    ).fetchone()
+                    run_number = row[0] if row else 1
                 conn.execute(
                     """
                     INSERT INTO runs
-                        (run_id, started_at, status, total_files, input_dir, settings)
-                    VALUES (?, ?, 'running', ?, ?, ?)
+                        (run_id, started_at, status, total_files, input_dir, settings, output_dir, run_number)
+                    VALUES (?, ?, 'running', ?, ?, ?, ?, ?)
                     """,
-                    (run_id, self._now(), total_files, input_dir, settings),
+                    (
+                        run_id,
+                        self._now(),
+                        total_files,
+                        input_dir,
+                        settings,
+                        run_number,
+                    ),
                 )
                 conn.commit()
             finally:
@@ -438,17 +477,13 @@ class DatabaseRepository:
                 total = conn.execute("SELECT COUNT(*) FROM runs").fetchone()[0]
                 rows = conn.execute(
                     """
-                    WITH run_nums AS (
-                        SELECT *, ROW_NUMBER() OVER (ORDER BY started_at ASC, run_id ASC) as run_number
-                        FROM runs
-                    )
                     SELECT run_id, run_number, started_at, completed_at, status,
                            total_files, done_files, failed_files,
                            direct_files, ocr_files, input_dir, log_path, output_dir,
                            ROUND(
                                (JULIANDAY(completed_at) - JULIANDAY(started_at)) * 86400
                            ) AS elapsed_seconds
-                    FROM run_nums
+                    FROM runs
                     ORDER BY started_at DESC
                     LIMIT ? OFFSET ?
                     """,
@@ -467,11 +502,7 @@ class DatabaseRepository:
                 total = conn.execute("SELECT COUNT(*) FROM runs").fetchone()[0]
                 rows = conn.execute(
                     """
-                    WITH run_nums AS (
-                        SELECT run_id, ROW_NUMBER() OVER (ORDER BY started_at ASC, run_id ASC) as run_number
-                        FROM runs
-                    )
-                    SELECT run_id, run_number FROM run_nums ORDER BY run_number DESC LIMIT ? OFFSET ?
+                    SELECT run_id, run_number FROM runs ORDER BY run_number DESC LIMIT ? OFFSET ?
                     """,
                     (size, offset),
                 ).fetchall()
@@ -486,17 +517,13 @@ class DatabaseRepository:
             try:
                 row = conn.execute(
                     """
-                    WITH run_nums AS (
-                        SELECT *, ROW_NUMBER() OVER (ORDER BY started_at ASC, run_id ASC) as run_number
-                        FROM runs
-                    )
                     SELECT run_id, run_number, started_at, completed_at, status,
                            total_files, done_files, failed_files,
                            direct_files, ocr_files, input_dir, log_path, output_dir,
                            ROUND(
                                (JULIANDAY(completed_at) - JULIANDAY(started_at)) * 86400
                            ) AS elapsed_seconds
-                    FROM run_nums WHERE run_id = ?
+                    FROM runs WHERE run_id = ?
                     """,
                     (run_id,),
                 ).fetchone()
@@ -546,7 +573,7 @@ class DatabaseRepository:
             finally:
                 conn.close()
 
-    def get_run_tree(
+    def get_result_tree(
         self, run_id: Optional[str] = None, page: int = 1, size: int = 50
     ) -> dict:
         """Returns paginated directories and top level files"""
@@ -590,11 +617,7 @@ class DatabaseRepository:
                     dirs_to_fetch = min(size, total_dirs - offset)
                     dir_rows = conn.execute(
                         f"""
-                        WITH run_nums AS (
-                            SELECT run_id, ROW_NUMBER() OVER (ORDER BY started_at ASC, run_id ASC) as run_number
-                            FROM runs
-                        ),
-                        dir_runs AS (
+                        WITH dir_runs AS (
                             SELECT dirname(rel_path) AS path, COUNT(DISTINCT run_id) AS run_count
                             FROM extracted_texts
                             WHERE instr(rel_path, '/') > 0
@@ -603,7 +626,7 @@ class DatabaseRepository:
                         SELECT e.run_id, rn.run_number, dirname(e.rel_path) AS path, count(*) AS count, max(e.processed_at) as last_processed,
                                CASE WHEN dr.run_count > 1 THEN 1 ELSE 0 END AS has_duplicate
                         FROM extracted_texts e
-                        LEFT JOIN run_nums rn ON rn.run_id = e.run_id
+                        LEFT JOIN runs rn ON rn.run_id = e.run_id
                         LEFT JOIN dir_runs dr ON dr.path = dirname(e.rel_path)
                         WHERE {where_clause}
                         GROUP BY e.run_id, path
@@ -620,11 +643,7 @@ class DatabaseRepository:
                     if remaining_size > 0:
                         top_files_rows = conn.execute(
                             f"""
-                            WITH run_nums AS (
-                                SELECT run_id, ROW_NUMBER() OVER (ORDER BY started_at ASC, run_id ASC) as run_number
-                                FROM runs
-                            ),
-                            file_runs AS (
+                            WITH file_runs AS (
                                 SELECT rel_path, COUNT(DISTINCT run_id) AS run_count
                                 FROM extracted_texts
                                 GROUP BY rel_path
@@ -634,7 +653,7 @@ class DatabaseRepository:
                                    rn.run_number,
                                    CASE WHEN fr.run_count > 1 THEN 1 ELSE 0 END AS has_duplicate
                             FROM extracted_texts e
-                            LEFT JOIN run_nums rn ON rn.run_id = e.run_id
+                            LEFT JOIN runs rn ON rn.run_id = e.run_id
                             LEFT JOIN file_runs fr ON fr.rel_path = e.rel_path
                             WHERE {top_where_clause}
                             ORDER BY e.processed_at DESC, e.filename ASC
@@ -646,11 +665,7 @@ class DatabaseRepository:
                     file_offset = offset - total_dirs
                     top_files_rows = conn.execute(
                         f"""
-                        WITH run_nums AS (
-                            SELECT run_id, ROW_NUMBER() OVER (ORDER BY started_at ASC, run_id ASC) as run_number
-                            FROM runs
-                        ),
-                        file_runs AS (
+                        WITH file_runs AS (
                             SELECT rel_path, COUNT(DISTINCT run_id) AS run_count
                             FROM extracted_texts
                             GROUP BY rel_path
@@ -660,7 +675,7 @@ class DatabaseRepository:
                                rn.run_number,
                                CASE WHEN fr.run_count > 1 THEN 1 ELSE 0 END AS has_duplicate
                         FROM extracted_texts e
-                        LEFT JOIN run_nums rn ON rn.run_id = e.run_id
+                        LEFT JOIN runs rn ON rn.run_id = e.run_id
                         LEFT JOIN file_runs fr ON fr.rel_path = e.rel_path
                         WHERE {top_where_clause}
                         ORDER BY e.processed_at DESC, e.filename ASC
@@ -870,23 +885,18 @@ class DatabaseRepository:
                 ).fetchone()[0]
                 rows = conn.execute(
                     f"""
-                    WITH run_nums AS (
-                        SELECT run_id, ROW_NUMBER() OVER (ORDER BY started_at ASC, run_id ASC) as run_number
-                        FROM runs
-                    ),
-                    file_runs AS (
+                    WITH file_runs AS (
                         SELECT rel_path, COUNT(DISTINCT run_id) AS run_count
                         FROM extracted_texts
                         GROUP BY rel_path
                     )
-                    SELECT e.id, e.run_id, rn.run_number, e.source_path, e.filename, e.rel_path,
+                    SELECT e.id, e.run_id, r.run_number, e.source_path, e.filename, e.rel_path,
                            e.txt_path, e.method, e.char_count, e.page_count,
                            e.content_hash, e.processed_at, e.confidence, e.flags,
                            r.started_at AS run_started_at,
                            CASE WHEN fr.run_count > 1 THEN 1 ELSE 0 END AS has_duplicate
                     FROM extracted_texts e
                     LEFT JOIN runs r ON r.run_id = e.run_id
-                    LEFT JOIN run_nums rn ON rn.run_id = e.run_id
                     LEFT JOIN file_runs fr ON fr.rel_path = e.rel_path
                     {where_sql}
                     {order_sql}
@@ -904,11 +914,7 @@ class DatabaseRepository:
             try:
                 row = conn.execute(
                     """
-                    WITH run_nums AS (
-                        SELECT run_id, ROW_NUMBER() OVER (ORDER BY started_at ASC, run_id ASC) as run_number
-                        FROM runs
-                    ),
-                    file_runs AS (
+                    WITH file_runs AS (
                         SELECT rel_path, COUNT(DISTINCT run_id) AS run_count
                         FROM extracted_texts
                         GROUP BY rel_path
@@ -916,7 +922,7 @@ class DatabaseRepository:
                     SELECT e.*, rn.run_number,
                            CASE WHEN fr.run_count > 1 THEN 1 ELSE 0 END AS has_duplicate
                     FROM extracted_texts e
-                    LEFT JOIN run_nums rn ON rn.run_id = e.run_id
+                    LEFT JOIN runs rn ON rn.run_id = e.run_id
                     LEFT JOIN file_runs fr ON fr.rel_path = e.rel_path
                     WHERE e.id = ?
                     """,

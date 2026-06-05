@@ -267,7 +267,7 @@ class DirectoryNode(BaseModel):
     has_duplicate: bool = False
 
 
-class RunTreeResponse(BaseModel):
+class ResultTreeResponse(BaseModel):
     directories: List[DirectoryNode]
     directories_total: int
     top_level_files: List[ResultRecord]
@@ -278,7 +278,7 @@ class RunTreeResponse(BaseModel):
     total: int
 
     @classmethod
-    def build(cls, data: dict) -> "RunTreeResponse":
+    def build(cls, data: dict) -> "ResultTreeResponse":
         import math
 
         size = data["size"]
@@ -294,5 +294,6 @@ class RunTreeResponse(BaseModel):
             page=data["page"],
             size=size,
             pages=pages,
-            total=data["total"]
+            total=data["total"],
         )
+

@@ -230,14 +230,14 @@ def run_pipeline(
 
     # Create run record before work begins
     # Scope all extracted files for this run to their own sub-directory
-    # so that extracted_files/<run_id>/ocr/... and .../direct/... are isolated
-    run_output_dir = os.path.join(output_dir, run_id)
+    run_number = db.get_next_run_number()
     os.makedirs(run_output_dir, exist_ok=True)
 
     db.create_run(
         run_id=run_id,
         total_files=len(files_to_process),
         input_dir=input_dir,
+        run_number=run_number,
     )
 
     # Pre mark all files as started in one transaction
