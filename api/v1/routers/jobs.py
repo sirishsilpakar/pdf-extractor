@@ -269,6 +269,8 @@ async def start_job(
         if not Path(req.output_dir).is_absolute()
         else req.output_dir
     )
+    # Check to make sure the directory is writable before starting the job
+    require_writable_directory(output_dir)
 
     # Use request timeout if provided, otherwise fallback to global config
     from config import GLOBAL_JOB_TIMEOUT_SECONDS
