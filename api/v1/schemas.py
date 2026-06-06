@@ -250,3 +250,7 @@ class FileReferenceResponse(BaseModel):
         default_factory=list,
         description="Detailed list of individual PDF files found under the path",
     )
+
+
+class ValidateDirectoryRequest(BaseModel):
+    path: str

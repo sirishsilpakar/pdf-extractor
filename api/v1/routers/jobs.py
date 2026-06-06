@@ -6,9 +6,9 @@ File ingestion
 --------------
 'StartJobRequest.file_ids' accepts two kinds of IDs, resolved in this order:
 
-1. Upload IDs — UUID directories under 'UPLOAD_DIR' created by 'POST /upload'. Files are hard linked into a manifest directory.
+1. Upload IDs - UUID directories under 'UPLOAD_DIR' created by 'POST /upload'. Files are hard linked into a manifest directory.
 
-2. Reference IDs — opaque UUIDs registered by 'POST /upload/reference'. The pipeline reads files directly from the server's local path no copy is made.
+2. Reference IDs - UUIDs registered by 'POST /upload/reference'. The pipeline reads files directly from the server's local path no copy is made.
 """
 
 from __future__ import annotations
@@ -29,11 +29,24 @@ from api.v1.schemas import (
     JobStatusResponse,
     PagedResponse,
     StartJobRequest,
+    ValidateDirectoryRequest,
 )
+from api.validators.filesystem import require_writable_directory
+from common.fs.paths import resolve_output_path
 from config import OUTPUT_DIR as _PKG_OUTPUT_DIR
 from config import UPLOAD_DIR
 
 router = APIRouter()
+
+
+@router.post(
+    "/validate-directory",
+    summary="Validate if directory is writable",
+)
+async def validate_directory(req: ValidateDirectoryRequest) -> dict:
+    target_path = resolve_output_path(req.path, _PKG_OUTPUT_DIR)
+    require_writable_directory(target_path)
+    return {"ok": True}
 
 
 @router.post(
