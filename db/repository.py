@@ -367,8 +367,8 @@ class DatabaseRepository:
                 conn.execute(
                     """
                     INSERT INTO runs
-                        (run_id, started_at, status, total_files, input_dir, settings)
-                    VALUES (?, ?, 'running', ?, ?, ?)
+                        (run_id, started_at, status, total_files, input_dir, settings, output_dir)
+                    VALUES (?, ?, 'running', ?, ?, ?, ?)
                     """,
                     (
                         run_id,
@@ -454,7 +454,7 @@ class DatabaseRepository:
                     """
                     SELECT run_id, started_at, completed_at, status,
                            total_files, done_files, failed_files,
-                           direct_files, ocr_files, input_dir, log_path,
+                           direct_files, ocr_files, input_dir, output_dir, log_path,
                            ROUND(
                                (JULIANDAY(completed_at) - JULIANDAY(started_at)) * 86400
                            ) AS elapsed_seconds
