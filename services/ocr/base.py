@@ -25,6 +25,15 @@ class OCRResult:
     confidence: float | None = None
     error: str | None = None
 
+    # The page_dict is a dictionary that contains the bounding boxes of the words
+    # A dict[int, dict[int, dict[int, dict[str, list[int]]]]] where the keys are
+    # block_num, par_num, line_num, and word_idx respectively
+    # The value is a list of 4 integers representing the bounding box of the word
+    # [x1, y1, x2, y2]
+    # This needs to be implemented in each OCR engine to ensure that the
+    # page dict is structured correctly and consistently
+    page_dict: dict | None = None
+
     # Sentinel value emitted when the engine binary is not installed
     ENGINE_MISSING_SENTINEL: str = "__OCR_ENGINE_MISSING__"
 
