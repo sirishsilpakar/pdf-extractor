@@ -477,7 +477,7 @@ class DatabaseRepository:
                     """
                     SELECT run_id, started_at, completed_at, status,
                            total_files, done_files, failed_files,
-                           direct_files, ocr_files, input_dir, log_path,
+                           direct_files, ocr_files, input_dir, log_path, output_dir,
                            ROUND(
                                (JULIANDAY(completed_at) - JULIANDAY(started_at)) * 86400
                            ) AS elapsed_seconds
