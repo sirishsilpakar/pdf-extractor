@@ -183,6 +183,7 @@ class RunRecord(BaseModel):
     )
     input_dir: Optional[str] = None
     log_path: Optional[str] = None  # absolute path to per-run activity log .txt
+    output_dir: Optional[str] = None
 
 
 class ExtractedFileRecord(BaseModel):
@@ -249,3 +250,7 @@ class FileReferenceResponse(BaseModel):
         default_factory=list,
         description="Detailed list of individual PDF files found under the path",
     )
+
+
+class ValidateDirectoryRequest(BaseModel):
+    path: str

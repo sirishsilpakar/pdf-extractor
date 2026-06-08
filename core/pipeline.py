@@ -238,6 +238,7 @@ def run_pipeline(
         run_id=run_id,
         total_files=len(files_to_process),
         input_dir=input_dir,
+        output_dir=run_output_dir,
     )
 
     # Pre mark all files as started in one transaction

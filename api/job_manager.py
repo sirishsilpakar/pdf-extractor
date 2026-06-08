@@ -427,10 +427,10 @@ class JobManager:
 
         self._append_log(
             f"Pipeline complete - "
-            f"done: {event.get('done', 0)} "
-            f"direct: {event.get('direct', 0)} "
-            f"ocr: {event.get('ocr', 0)} "
-            f"failed: {event.get('failed', 0)}",
+            f"Done: {event.get('done', 0)} "
+            f"Direct: {event.get('direct', 0)} "
+            f"OCR: {event.get('ocr', 0)} "
+            f"Failed: {event.get('failed', 0)}",
             level="success",
         )
         self._emit({"type": "state_update", **self.get_status()})
