@@ -31,7 +31,7 @@ from typing import Any, Optional
 logger = logging.getLogger(__name__)
 
 
-_SCHEMA_VERSION = 16
+_SCHEMA_VERSION = 17
 
 # Each value is a list of SQL statements for that migration step
 # Statements are executed individually so we can catch "already exists" errors
@@ -392,8 +392,8 @@ class DatabaseRepository:
                 conn.execute(
                     """
                     INSERT INTO runs
-                        (run_id, started_at, status, total_files, input_dir, settings, output_dir, run_number)
-                    VALUES (?, ?, 'running', ?, ?, ?, ?, ?)
+                        (run_id, started_at, status, total_files, input_dir, settings, run_number)
+                    VALUES (?, ?, 'running', ?, ?, ?, ?)
                     """,
                     (
                         run_id,
@@ -479,7 +479,7 @@ class DatabaseRepository:
                     """
                     SELECT run_id, run_number, started_at, completed_at, status,
                            total_files, done_files, failed_files,
-                           direct_files, ocr_files, input_dir, log_path, output_dir,
+                           direct_files, ocr_files, input_dir, log_path,
                            ROUND(
                                (JULIANDAY(completed_at) - JULIANDAY(started_at)) * 86400
                            ) AS elapsed_seconds
@@ -519,7 +519,7 @@ class DatabaseRepository:
                     """
                     SELECT run_id, run_number, started_at, completed_at, status,
                            total_files, done_files, failed_files,
-                           direct_files, ocr_files, input_dir, log_path, output_dir,
+                           direct_files, ocr_files, input_dir, log_path,
                            ROUND(
                                (JULIANDAY(completed_at) - JULIANDAY(started_at)) * 86400
                            ) AS elapsed_seconds
