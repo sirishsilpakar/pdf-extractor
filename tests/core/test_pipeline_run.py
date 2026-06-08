@@ -40,10 +40,10 @@ def test_pipeline_run_dir_naming(tmp_path):
     # Verify run number in DB is 1
     run = db.get_run("abc-123-xyz")
     assert run is not None
-    # assert run["run_number"] == 1
+    assert run["run_number"] == 1
 
     # Check directory created
-    expected_dir_name = "abc-123-xyz"  # "run1_abc-123-xyz"
+    expected_dir_name = "run1_abc-123-xyz"
     expected_path = output_dir / expected_dir_name
     assert os.path.exists(expected_path)
     assert os.path.isdir(expected_path)
@@ -60,9 +60,9 @@ def test_pipeline_run_dir_naming(tmp_path):
 
     run2 = db.get_run("def-456-uvw")
     assert run2 is not None
-    # assert run2["run_number"] == 2
+    assert run2["run_number"] == 2
 
-    expected_dir_name2 = "def-456-uvw"  # "run2_def-456-uvw"
+    expected_dir_name2 = "run2_def-456-uvw"
     expected_path2 = output_dir / expected_dir_name2
     assert os.path.exists(expected_path2)
     assert os.path.isdir(expected_path2)
