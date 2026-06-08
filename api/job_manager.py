@@ -217,6 +217,7 @@ class JobManager:
                 db,
                 run_id,
                 timeout_seconds,
+                settings,
             ),
             daemon=True,
         )
@@ -427,10 +428,10 @@ class JobManager:
 
         self._append_log(
             f"Pipeline complete - "
-            f"done: {event.get('done', 0)} "
-            f"direct: {event.get('direct', 0)} "
-            f"ocr: {event.get('ocr', 0)} "
-            f"failed: {event.get('failed', 0)}",
+            f"Done: {event.get('done', 0)} "
+            f"Direct: {event.get('direct', 0)} "
+            f"OCR: {event.get('ocr', 0)} "
+            f"Failed: {event.get('failed', 0)}",
             level="success",
         )
         self._emit({"type": "state_update", **self.get_status()})
@@ -480,6 +481,7 @@ class JobManager:
         db,
         run_id: str = "",
         timeout_seconds: int = 0,
+        settings: Optional[dict] = None,
     ) -> None:
         """Execute ``run_pipeline`` in a background daemon thread"""
         import logging as _logging
@@ -497,6 +499,7 @@ class JobManager:
                 db=db,
                 run_id=run_id or None,
                 total_timeout_seconds=timeout_seconds,
+                settings=settings,
             )
         except Exception as exc:
             _logging.exception("Pipeline thread crashed: %s", exc)

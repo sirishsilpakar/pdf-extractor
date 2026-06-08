@@ -10,7 +10,7 @@ from typing import List, Optional
 
 from fastapi import APIRouter, File, HTTPException, Query, Request, UploadFile
 from fastapi.responses import FileResponse, StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 
 import database
 from api import job_manager, sse
@@ -37,6 +37,18 @@ class StartRequest(BaseModel):
     output_dir: Optional[str] = "extracted_files"
     force: bool = False
     settings: Optional[dict] = None
+
+    @field_validator("settings", mode="before")
+    @classmethod
+    def normalise_settings_casing(cls, v: object) -> Optional[dict]:
+        """Normalise settings dictionary keys from camelCase to snake_case"""
+        if isinstance(v, dict):
+            import re
+
+            return {
+                re.sub(r"(?<!^)(?=[A-Z])", "_", k).lower(): val for k, val in v.items()
+            }
+        return v
 
 
 class UploadedFile(BaseModel):

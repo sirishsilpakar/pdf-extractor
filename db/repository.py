@@ -9,7 +9,7 @@ maps to a list of idempotent SQL statements in '_MIGRATIONS'.  On startup
 Legacy DBs (created before versioning was introduced, 'user_version = 0')
 are detected via '_detect_legacy_version' so existing data is never lost.
 
-Current schema version: 5
+Current schema version: 18
 
 Migration history
 -----------------
@@ -18,6 +18,16 @@ Migration history
 3 'runs' table + 'run_id' FK on 'extracted_texts'
 4 'direct_files' / 'ocr_files' columns on 'runs'
 5 'fts_pages' FTS5 virtual table for per-page full-text search
+6 'confidence' / 'flags' columns on 'extracted_texts'
+7 'txt_hash' column on 'extracted_texts'
+11 'log_path' column on 'runs'
+12 'batches' table
+13 'batch_files' table
+14 'updated_at' column on 'batches'
+15 'idx_batches_path' dropped on 'batches'
+16 'idx_et_filename' and 'idx_et_hash' dropped and recreated on 'extracted_texts'
+17 'run_number' column on 'runs' + update existing runs with run_number
+18 'output_dir' column on 'runs'
 """
 
 from __future__ import annotations
@@ -31,7 +41,7 @@ from typing import Any, Optional
 logger = logging.getLogger(__name__)
 
 
-_SCHEMA_VERSION = 16
+_SCHEMA_VERSION = 18
 
 # Each value is a list of SQL statements for that migration step
 # Statements are executed individually so we can catch "already exists" errors
@@ -163,6 +173,9 @@ _MIGRATIONS: dict[int, list[str]] = {
         "DROP INDEX IF EXISTS idx_et_hash",
         "CREATE INDEX IF NOT EXISTS idx_et_filename ON extracted_texts(filename)",
         "CREATE INDEX IF NOT EXISTS idx_et_hash ON extracted_texts(content_hash)",
+    ],
+    18: [
+        "ALTER TABLE runs ADD COLUMN output_dir TEXT",
     ],
 }
 
@@ -345,6 +358,7 @@ class DatabaseRepository:
         total_files: int,
         input_dir: str = "",
         settings: str = "",
+        output_dir: str = "",
     ) -> None:
         """Insert a new run record with status='running'"""
         with self._lock:
@@ -353,10 +367,17 @@ class DatabaseRepository:
                 conn.execute(
                     """
                     INSERT INTO runs
-                        (run_id, started_at, status, total_files, input_dir, settings)
-                    VALUES (?, ?, 'running', ?, ?, ?)
+                        (run_id, started_at, status, total_files, input_dir, settings, output_dir)
+                    VALUES (?, ?, 'running', ?, ?, ?, ?)
                     """,
-                    (run_id, self._now(), total_files, input_dir, settings),
+                    (
+                        run_id,
+                        self._now(),
+                        total_files,
+                        input_dir,
+                        settings,
+                        output_dir,
+                    ),
                 )
                 conn.commit()
             finally:
@@ -433,7 +454,7 @@ class DatabaseRepository:
                     """
                     SELECT run_id, started_at, completed_at, status,
                            total_files, done_files, failed_files,
-                           direct_files, ocr_files, input_dir, log_path,
+                           direct_files, ocr_files, input_dir, output_dir, log_path,
                            ROUND(
                                (JULIANDAY(completed_at) - JULIANDAY(started_at)) * 86400
                            ) AS elapsed_seconds
@@ -456,7 +477,7 @@ class DatabaseRepository:
                     """
                     SELECT run_id, started_at, completed_at, status,
                            total_files, done_files, failed_files,
-                           direct_files, ocr_files, input_dir, log_path,
+                           direct_files, ocr_files, input_dir, log_path, output_dir,
                            ROUND(
                                (JULIANDAY(completed_at) - JULIANDAY(started_at)) * 86400
                            ) AS elapsed_seconds
