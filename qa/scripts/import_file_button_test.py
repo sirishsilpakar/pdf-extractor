@@ -1,66 +1,43 @@
 import subprocess
 import pyautogui
 import time
-from pathlib import Path
+import os
 
-# ----------------------------
-# Base directory (repo-safe)
-# ----------------------------
-BASE_DIR = Path(__file__).resolve().parent
+APP_PATH = r"C:\Users\luthr\Downloads\artifacts (1)\release\PDF Text extractor tool 1.0.0.exe"
 
-# ----------------------------
-# Paths (ALL RELATIVE)
-# ----------------------------
+# Launch app
+subprocess.Popen(APP_PATH)
 
-APP_PATH = BASE_DIR / "PDF Text extractor tool 1.0.0.exe"
-IMPORT_BTN_IMG = BASE_DIR / "Import_file.png"
-START_BTN_IMG = BASE_DIR / "start_button.png"
+time.sleep(30)  # better: wait for window in real tests
 
-PDF_PATH = BASE_DIR / "1. Handwritten_Image.pdf"
+# locate the upload file button and click 
+import_but = pyautogui.locateOnScreen("import_file.png", confidence=0.5)
 
+if import_but is None:
+    raise Exception("Import button not found")
 
-# ----------------------------
-# Launch App
-# ----------------------------
-subprocess.Popen(str(APP_PATH))
-time.sleep(30)
+x, y = pyautogui.center(import_but)
 
-
-# ----------------------------
-# Helper function
-# ----------------------------
-def find_and_click(image_path, confidence=0.7, name="element"):
-    location = pyautogui.locateOnScreen(str(image_path), confidence=confidence)
-
-    if location is None:
-        pyautogui.screenshot(f"debug_{name}.png")
-        raise Exception(f"{name} not found: {image_path}")
-
-    x, y = pyautogui.center(location)
-    pyautogui.moveTo(x, y, duration=1)
-    pyautogui.click()
-
-
-# ----------------------------
-# Step 1: Click Import Button
-# ----------------------------
-find_and_click(IMPORT_BTN_IMG, confidence=0.6, name="import_button")
+pyautogui.moveTo(x, y, duration=1)
+pyautogui.click()
 
 time.sleep(5)
 
-# ----------------------------
-# Step 2: Upload PDF
-# ----------------------------
-pyautogui.write(str(PDF_PATH))
+# Select file
+pyautogui.write(r"C:\Users\luthr\Documents\Samples\Scanned PDF\1. Handwritten_Image.pdf")
 pyautogui.press("enter")
 
 time.sleep(3)
+
 print("PDF uploaded successfully")
 
+# locate the upload file button and click 
+import_but = pyautogui.locateOnScreen("start_button.png", confidence=0.7)
 
-# ----------------------------
-# Step 3: Click Start Button
-# ----------------------------
-find_and_click(START_BTN_IMG, confidence=0.7, name="start_button")
+if import_but is None:
+    raise Exception("Import button not found")
 
-print("Test completed successfully")
+x, y = pyautogui.center(import_but)
+
+pyautogui.moveTo(x, y, duration=1)
+pyautogui.click()
