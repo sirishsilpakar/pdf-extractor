@@ -71,7 +71,7 @@ def _configure_logging(log_dir: str) -> None:
     logging.basicConfig(
         filename=log_path,
         level=logging.INFO,
-        format="%(asctime)s %(levelname)s %(name)s — %(message)s",
+        format="%(asctime)s %(levelname)s %(name)s - %(message)s",
         force=True,
     )
 
@@ -231,14 +231,17 @@ def run_pipeline(
 
     # Create run record before work begins
     # Scope all extracted files for this run to their own sub-directory
-    # so that extracted_files/<run_id>/ocr/... and .../direct/... are isolated
-    run_output_dir = os.path.join(output_dir, run_id)
+    # so that extracted_files/run#_run_id/ocr/... and .../direct/... are isolated
+    run_number = db.get_next_run_number()
+    run_dir_name = f"run{run_number}_{run_id}"
+    run_output_dir = os.path.join(output_dir, run_dir_name)
     os.makedirs(run_output_dir, exist_ok=True)
 
     db.create_run(
         run_id=run_id,
         total_files=len(files_to_process),
         input_dir=input_dir,
+        run_number=run_number,
         output_dir=run_output_dir,
     )
 

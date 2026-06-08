@@ -81,34 +81,26 @@ async def reindex(
     db: DBDep = ...,  # type: ignore[assignment]
 ) -> dict:
     def _run():
-        import asyncio
-
         from api import sse
 
         loop = sse._loop  # type: ignore[attr-defined]
 
         def _cb(done: int, total: int):
             if loop and not loop.is_closed():
-                asyncio.run_coroutine_threadsafe(
-                    sse.broadcast(
-                        {
-                            "type": "log",
-                            "message": f"[FTS reindex] {done}/{total} documents indexed",
-                        }
-                    ),
-                    loop,
+                sse.broadcast(
+                    {
+                        "type": "log",
+                        "message": f"[FTS reindex] {done}/{total} documents indexed",
+                    }
                 )
 
         count = db.fts_rebuild(progress_cb=_cb)
         if loop and not loop.is_closed():
-            asyncio.run_coroutine_threadsafe(
-                sse.broadcast(
-                    {
-                        "type": "log",
-                        "message": f"[FTS reindex] Complete - {count} documents indexed.",
-                    }
-                ),
-                loop,
+            sse.broadcast(
+                {
+                    "type": "log",
+                    "message": f"[FTS reindex] Complete - {count} documents indexed.",
+                }
             )
 
     background_tasks.add_task(_run)

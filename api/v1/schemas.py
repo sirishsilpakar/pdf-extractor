@@ -162,21 +162,23 @@ class ResultRecord(BaseModel):
     id: int
     run_id: Optional[str] = None
     run_started_at: Optional[str] = None
-    source_path: str
+    run_number: Optional[int] = None
     filename: str
     rel_path: str
-    txt_path: str
     method: str
     char_count: int
-    page_count: int
     content_hash: Optional[str]
     processed_at: str
     confidence: Optional[float] = None
     flags: Optional[str] = None
+    has_duplicate: bool = False
 
 
 class ResultDetail(ResultRecord):
     content: str = Field(description="Full text content read from disk")
+    page_count: int
+    source_path: str
+    txt_path: str
 
 
 class RunRecord(BaseModel):
@@ -194,6 +196,7 @@ class RunRecord(BaseModel):
     )
     input_dir: Optional[str] = None
     log_path: Optional[str] = None  # absolute path to per-run activity log .txt
+    run_number: Optional[int] = None
     output_dir: Optional[str] = None
 
 
@@ -261,6 +264,50 @@ class FileReferenceResponse(BaseModel):
         default_factory=list,
         description="Detailed list of individual PDF files found under the path",
     )
+
+
+class RunIdItem(BaseModel):
+    run_id: str
+    run_number: int
+
+
+class DirectoryNode(BaseModel):
+    run_id: str
+    run_number: Optional[int] = None
+    path: str
+    count: int
+    has_duplicate: bool = False
+
+
+class ResultTreeResponse(BaseModel):
+    directories: List[DirectoryNode]
+    directories_total: int
+    top_level_files: List[ResultRecord]
+    top_level_files_total: int
+    page: int
+    size: int
+    pages: int
+    total: int
+
+    @classmethod
+    def build(cls, data: dict) -> "ResultTreeResponse":
+        import math
+
+        size = data["size"]
+        dirs_total = data["directories_total"]
+        files_total = data["top_level_files_total"]
+        combined_total = dirs_total + files_total
+        pages = max(1, math.ceil(combined_total / size) if size > 0 else 1)
+        return cls(
+            directories=data["directories"],
+            directories_total=dirs_total,
+            top_level_files=data["top_level_files"],
+            top_level_files_total=files_total,
+            page=data["page"],
+            size=size,
+            pages=pages,
+            total=data["total"],
+        )
 
 
 class ValidateDirectoryRequest(BaseModel):

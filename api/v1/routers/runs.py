@@ -12,7 +12,13 @@ from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import PlainTextResponse
 
 from api.v1.deps import DBDep
-from api.v1.schemas import PagedResponse, ResultRecord, RunRecord
+from api.v1.schemas import (
+    PagedResponse,
+    ResultRecord,
+    ResultTreeResponse,
+    RunIdItem,
+    RunRecord,
+)
 
 router = APIRouter()
 
@@ -38,6 +44,26 @@ async def list_runs(
 
 
 @router.get(
+    "/ids",
+    response_model=PagedResponse[RunIdItem],
+    summary="List all run IDs",
+    description="Returns a paginated list of all run IDs with run numbers, newest first, for filtering",
+)
+async def list_run_ids(
+    db: DBDep = ...,  # type: ignore[assignment]
+    page: int = Query(1, ge=1),
+    size: int = Query(20, ge=1, le=100),
+) -> PagedResponse[RunIdItem]:
+    total, rows = db.get_all_run_ids(page=page, size=size)
+    return PagedResponse.build(
+        total=total,
+        page=page,
+        size=size,
+        items=[RunIdItem(**r) for r in rows],
+    )
+
+
+@router.get(
     "/{run_id}",
     response_model=RunRecord,
     summary="Get a single run by ID",
@@ -53,6 +79,25 @@ async def get_run(
 
 
 @router.get(
+    "/{run_id}/tree",
+    response_model=ResultTreeResponse,
+    summary="Get directory and file tree for a run",
+    description="Returns a structural breakdown of the run (directories and top-level files)",
+)
+async def get_run_tree(
+    run_id: str,
+    db: DBDep = ...,  # type: ignore[assignment]
+) -> ResultTreeResponse:
+    if not db.get_run(run_id):
+        raise HTTPException(404, detail=f"Run {run_id!r} not found.")
+    tree = db.get_result_tree(run_id)
+
+    tree["top_level_files"] = [ResultRecord(**r) for r in tree["top_level_files"]]
+
+    return ResultTreeResponse.build(tree)
+
+
+@router.get(
     "/{run_id}/files",
     response_model=PagedResponse[ResultRecord],
     summary="List files processed in a specific run",
@@ -63,11 +108,16 @@ async def get_run_files(
     db: DBDep = ...,  # type: ignore[assignment]
     page: int = Query(1, ge=1),
     size: int = Query(50, ge=1, le=200),
+    directory: str | None = Query(
+        None, description="Optional relative directory path prefix to filter files"
+    ),
 ) -> PagedResponse[ResultRecord]:
     # Verify run exists
     if not db.get_run(run_id):
         raise HTTPException(404, detail=f"Run {run_id!r} not found.")
-    total, rows = db.get_run_files(run_id=run_id, page=page, size=size)
+    total, rows = db.get_run_files(
+        run_id=run_id, page=page, size=size, directory=directory
+    )
     # get_run_files returns minimal columns and fill missing ones with defaults
     items = []
     for r in rows:

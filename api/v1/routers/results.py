@@ -13,7 +13,7 @@ from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import FileResponse
 
 from api.v1.deps import DBDep
-from api.v1.schemas import PagedResponse, ResultDetail, ResultRecord
+from api.v1.schemas import PagedResponse, ResultDetail, ResultRecord, ResultTreeResponse
 
 router = APIRouter()
 
@@ -29,12 +29,12 @@ async def list_results(
     page: int = Query(1, ge=1),
     size: int = Query(50, ge=1, le=200),
     run_id: Optional[str] = Query(None, description="Filter by a specific run ID"),
-    folder: Optional[str] = Query(
+    directory: Optional[str] = Query(
         None, description="Filter by relative path prefix (directory)"
     ),
 ) -> PagedResponse[ResultRecord]:
     total, rows = db.get_extracted_texts(
-        page=page, size=size, run_id=run_id, rel_path_prefix=folder
+        page=page, size=size, run_id=run_id, rel_path_prefix=directory
     )
     return PagedResponse.build(
         total=total,
@@ -42,6 +42,24 @@ async def list_results(
         size=size,
         items=[ResultRecord(**r) for r in rows],
     )
+
+
+@router.get(
+    "/tree",
+    response_model=ResultTreeResponse,
+    summary="Get directory tree",
+    description="Returns a structural breakdown of the results (directories and top-level files)",
+)
+async def get_results_tree(
+    run_id: Optional[str] = Query(None, description="Filter by run ID"),
+    page: int = Query(1, ge=1),
+    size: int = Query(50, ge=1, le=200),
+    db: DBDep = ...,  # type: ignore[assignment]
+) -> ResultTreeResponse:
+    tree = db.get_result_tree(run_id, page=page, size=size)
+
+    tree["top_level_files"] = [ResultRecord(**r) for r in tree["top_level_files"]]
+    return ResultTreeResponse.build(tree)
 
 
 @router.get(
