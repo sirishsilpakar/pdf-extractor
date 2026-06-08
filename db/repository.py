@@ -31,7 +31,7 @@ from typing import Any, Optional
 logger = logging.getLogger(__name__)
 
 
-_SCHEMA_VERSION = 15
+_SCHEMA_VERSION = 16
 
 # Each value is a list of SQL statements for that migration step
 # Statements are executed individually so we can catch "already exists" errors
@@ -157,6 +157,12 @@ _MIGRATIONS: dict[int, list[str]] = {
         # iteration. Registering the same path again should be idempotent, not
         # an error. The router now handles the "already exists" case explicitly.
         "DROP INDEX IF EXISTS idx_batches_path",
+    ],
+    16: [
+        "DROP INDEX IF EXISTS idx_et_filename",
+        "DROP INDEX IF EXISTS idx_et_hash",
+        "CREATE INDEX IF NOT EXISTS idx_et_filename ON extracted_texts(filename)",
+        "CREATE INDEX IF NOT EXISTS idx_et_hash ON extracted_texts(content_hash)",
     ],
 }
 
@@ -613,7 +619,7 @@ class DatabaseRepository:
             try:
                 cursor = conn.execute(
                     """
-                    INSERT OR REPLACE INTO extracted_texts
+                    INSERT INTO extracted_texts
                         (run_id, source_path, filename, rel_path, txt_path, method,
                          char_count, page_count, content_hash, processed_at, confidence, flags, txt_hash)
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -845,12 +851,12 @@ class DatabaseRepository:
                     (safe_q,),
                 ).fetchall()
 
-                # Group by doc_id, keeping the best ranked page per document
-                seen: dict[int, dict] = {}
+                # Group by (filename, rel_path), keeping the best ranked page per document
+                seen: dict[tuple[str, str], dict] = {}
                 for r in rows:
-                    did = r["doc_id"]
-                    if did not in seen:
-                        seen[did] = dict(r)
+                    key = (r["filename"], r["rel_path"])
+                    if key not in seen:
+                        seen[key] = dict(r)
 
                 all_matches = list(seen.values())
                 total = len(all_matches)
@@ -1127,12 +1133,12 @@ class DatabaseRepository:
                 conn.close()
 
     def get_recent_batches(self, limit: int = 20) -> list[dict]:
-        """Return list of recently created batches."""
+        """Return list of recently active batches."""
         with self._lock:
             conn = self._connect()
             try:
                 rows = conn.execute(
-                    "SELECT * FROM batches ORDER BY created_at DESC LIMIT ?",
+                    "SELECT * FROM batches ORDER BY updated_at DESC LIMIT ?",
                     (limit,),
                 ).fetchall()
                 batch_dicts = [dict(r) for r in rows]

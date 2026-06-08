@@ -92,7 +92,20 @@ async def _sse_endpoint(request: Request):
 
     async def generate():
         # Push current state immediately so the UI syncs on connect
-        initial = json.dumps({"type": "state_update", **_jm.get_manager().get_status()})
+        st = _jm.get_manager().get_status()
+        if st.get("status") != "running":
+            st = {
+                "status": "idle",
+                "done": 0,
+                "total": 0,
+                "failed": 0,
+                "progress_pct": 0,
+                "log": [],
+                "current_file": "",
+                "error_message": None,
+                "batch_ids": [],
+            }
+        initial = json.dumps({"type": "state_update", **st})
         yield f"data: {initial}\n\n"
 
         try:

@@ -24,15 +24,19 @@ class PagedResponse(BaseModel, Generic[T]):
     size: int = Field(description="Items per page requested")
     pages: int = Field(description="Total number of pages")
     items: List[T] = Field(description="Items on this page")
+    run_id: Optional[str] = Field(default=None, description="Current Job run ID")
 
     @classmethod
-    def build(cls, total: int, page: int, size: int, items: list) -> "PagedResponse":
+    def build(
+        cls, total: int, page: int, size: int, items: list, run_id: Optional[str] = None
+    ) -> "PagedResponse":
         return cls(
             total=total,
             page=page,
             size=size,
             pages=math.ceil(total / size) if size > 0 else 0,
             items=items,
+            run_id=run_id,
         )
 
 
@@ -84,7 +88,10 @@ class StartJobRequest(BaseModel):
         default=None,
         description="Optional mapping of ref_id -> list of relative paths to process. If provided for a ref_id, only these files will be processed.",
     )
-    output_dir: str = Field(default="extracted_files")
+    output_dir: str = Field(
+        default="",
+        description="Empty by default so output is stored in global output_dir only. If specified, output is stored in a subfolder of the global output_dir",
+    )
     force: bool = Field(
         default=False,
         description="Reprocess files that are already in the database",
@@ -121,7 +128,8 @@ class JobStatusResponse(BaseModel):
     elapsed: float
     eta_seconds: Optional[int]
     current_file: str
-    log: List[str] = Field(default_factory=list)
+    log: List[dict] = Field(default_factory=list)
+    run_id: Optional[str] = Field(default=None)
 
 
 class FileEntryResponse(BaseModel):

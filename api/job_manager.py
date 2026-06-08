@@ -58,12 +58,12 @@ class LogBuffer:
     """Fixed capacity FIFO log line store."""
 
     def __init__(self, maxlen: int = 500) -> None:
-        self._lines: Deque[str] = deque(maxlen=maxlen)
+        self._lines: Deque[dict] = deque(maxlen=maxlen)
 
-    def append(self, msg: str) -> None:
-        self._lines.append(msg)
+    def append(self, msg: str, level: str = "info") -> None:
+        self._lines.append({"message": msg, "level": level})
 
-    def snapshot(self) -> list[str]:
+    def snapshot(self) -> list[dict]:
         return list(self._lines)
 
     def clear(self) -> None:
@@ -182,10 +182,10 @@ class JobManager:
         timeout_seconds: int = 0,
         batch_ids: Optional[list[str]] = None,
         skip_count: int = 0,
-    ) -> bool:
+    ) -> Optional[str]:
         """Start the pipeline in a background thread.
 
-        Returns 'False' if a job is already running
+        Returns run_id if started, or None if a job is already running
         """
         import uuid as _uuid
 
@@ -193,7 +193,7 @@ class JobManager:
 
         with self._lock:
             if self._state.status == JobStatus.RUNNING:
-                return False
+                return None
             self._cancel.clear()
             self._state.reset(
                 file_entries,
@@ -203,7 +203,7 @@ class JobManager:
             )
 
         if settings:
-            self._append_log(f"[INFO] Settings received: {settings}")
+            self._append_log(f"Settings received: {settings}", level="info")
 
         self._emit({"type": "state_update", **self.get_status()})
 
@@ -221,7 +221,7 @@ class JobManager:
             daemon=True,
         )
         thread.start()
-        return True
+        return run_id
 
     def cancel_job(self) -> None:
         self._cancel.set()
@@ -230,7 +230,7 @@ class JobManager:
                 self._state.status = JobStatus.CANCELLED
                 self._state.end_time = time.time()
         self._emit({"type": "state_update", **self.get_status()})
-        self._append_log("[INFO] Pipeline cancellation requested by user.")
+        self._append_log("Pipeline cancellation requested by user.", level="info")
 
     def get_status(self) -> dict:
         """Return compact metadata dict (does not include the files list)"""
@@ -261,6 +261,7 @@ class JobManager:
                 "batch_ids": self._state.batch_ids,
                 "error_message": self._state.error_message,
                 "log": self._state.log.snapshot(),
+                "run_id": self._state.run_id,
             }
 
     def get_files_page(
@@ -273,7 +274,15 @@ class JobManager:
 
     def handle_event(self, event: dict) -> None:
         """Route an event dict to the appropriate handler (progress callback)"""
+        with self._lock:
+            is_cancelled = self._state.status == JobStatus.CANCELLED
+
         etype = event.get("type", "")
+
+        # Immediately stop processing worker events if the job was cancelled
+        if is_cancelled:
+            return
+
         handler = self._handlers.get(etype)
         if handler:
             handler(event)
@@ -283,7 +292,7 @@ class JobManager:
     # ------------------------------------------------------------------
 
     def _on_log(self, event: dict) -> None:
-        self._append_log(event.get("message", ""))
+        self._append_log(event.get("message", ""), level=event.get("level", "info"))
 
     def _on_file_started(self, event: dict) -> None:
         file_path = event.get("file_path", "")
@@ -298,7 +307,7 @@ class JobManager:
                 entry.current_page = 0
             self._state.current_file = basename
 
-        self._append_log(f"[INFO] Worker {pid} → {basename}")
+        self._append_log(f"Worker {pid} -> {basename}", level="info")
 
         # Use for immediate row update (for UI) without requiring full state refetch
         self._emit(
@@ -309,6 +318,7 @@ class JobManager:
                 "page": 0,
                 "total_pages": 0,
                 "status": "processing",
+                "method": "direct",
             }
         )
         self._emit({"type": "state_update", **self.get_status()})
@@ -321,6 +331,7 @@ class JobManager:
         pid = event.get("pid", "?")
         secs = event.get("seconds", 0)
 
+        running_overall_method = ExtractionMethod.DIRECT.value
         with self._lock:
             entry = self._state.find_by_name(basename)
             if entry and total_pages > 0:
@@ -328,9 +339,27 @@ class JobManager:
                 entry.total_pages = total_pages
                 entry.progress_pct = min(99, int(page / total_pages * 100))
 
+                # Track running count of page extraction methods dynamically
+                if not hasattr(entry, "_ocr_pages_count"):
+                    entry._ocr_pages_count = 0
+                if not hasattr(entry, "_direct_pages_count"):
+                    entry._direct_pages_count = 0
+
+                if method == ExtractionMethod.OCR.value:
+                    entry._ocr_pages_count += 1
+                elif method == ExtractionMethod.DIRECT.value:
+                    entry._direct_pages_count += 1
+
+                if entry._ocr_pages_count > entry._direct_pages_count:
+                    entry.method = ExtractionMethod.OCR
+                else:
+                    entry.method = ExtractionMethod.DIRECT
+                running_overall_method = entry.method.value
+
         tag = "OCR" if method == ExtractionMethod.OCR.value else "DIRECT"
         self._append_log(
-            f"[INFO] W{pid} · {basename}  pg {page}/{total_pages}  {tag}  {secs:.2f}s"
+            f"W{pid} · {basename}  pg {page}/{total_pages}  {tag}  {secs:.2f}s",
+            level="info",
         )
         # Lightweight targeted event to avoid full state_update on every page
         self._emit(
@@ -340,6 +369,7 @@ class JobManager:
                 "pct": min(99, int(page / total_pages * 100)) if total_pages else 0,
                 "page": page,
                 "total_pages": total_pages,
+                "method": running_overall_method,
             }
         )
 
@@ -381,6 +411,9 @@ class JobManager:
                 "file": os.path.basename(file_path),
                 "pct": 100,
                 "status": final_status,
+                "method": (
+                    entry.method.value if entry else ExtractionMethod.DIRECT.value
+                ),
             }
         )
         self._emit({"type": "state_update", **self.get_status()})
@@ -393,16 +426,19 @@ class JobManager:
             self._state.current_file = ""
 
         self._append_log(
-            f"[OK] Pipeline complete - "
+            f"Pipeline complete - "
             f"done: {event.get('done', 0)} "
             f"direct: {event.get('direct', 0)} "
             f"ocr: {event.get('ocr', 0)} "
-            f"failed: {event.get('failed', 0)}"
+            f"failed: {event.get('failed', 0)}",
+            level="success",
         )
         self._emit({"type": "state_update", **self.get_status()})
 
     def _on_ocr_missing(self, _event: dict) -> None:
-        self._append_log("[ERROR] OCR engine/binary not installed - pipeline stopped.")
+        self._append_log(
+            "OCR engine/binary not installed - pipeline stopped.", level="error"
+        )
 
     # ------------------------------------------------------------------
     # Internal helper methods
@@ -418,11 +454,11 @@ class JobManager:
         end = self._state.end_time if self._state.end_time is not None else time.time()
         return round(end - self._state.start_time, 1)
 
-    def _append_log(self, msg: str) -> None:
+    def _append_log(self, msg: str, level: str = "info") -> None:
         """Append to log buffer then broadcast state mutation and side effect separated"""
         with self._lock:
-            self._state.log.append(msg)
-        self._emit({"type": "log", "message": msg})
+            self._state.log.append(msg, level)
+        self._emit({"type": "log", "message": msg, "level": level})
 
     def _emit(self, event: dict) -> None:
         """Broadcast an event, swallow exceptions so a stalled client never kills the pipeline"""
@@ -464,7 +500,7 @@ class JobManager:
             )
         except Exception as exc:
             _logging.exception("Pipeline thread crashed: %s", exc)
-            self._append_log(f"[ERROR] Pipeline crashed: {exc}")
+            self._append_log(f"Pipeline crashed: {exc}", level="error")
             with self._lock:
                 self._state.status = JobStatus.DONE
                 self._state.error_message = str(exc)
@@ -490,7 +526,11 @@ class JobManager:
                 lines = self._state.log.snapshot()
 
             with open(log_path, "w", encoding="utf-8") as fh:
-                fh.write("\n".join(lines))
+                fh.write(
+                    "\n".join(
+                        f"[{line['level'].upper()}] {line['message']}" for line in lines
+                    )
+                )
 
             if db is not None and hasattr(db, "save_run_log_path"):
                 db.save_run_log_path(run_id, log_path)
