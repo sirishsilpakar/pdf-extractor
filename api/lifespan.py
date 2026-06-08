@@ -35,8 +35,10 @@ async def lifespan(app: FastAPI):
         print(f"[startup] WARNING: {exc}")
         print("[startup] OCR is disabled - direct extraction only.")
 
-    print("PDF TextExtract server ready -> http://localhost:8080")
-    print("  Docs: http://localhost:8080/docs")
+    from config import SERVER_PORT
+
+    print(f"PDF TextExtract server ready -> http://localhost:{SERVER_PORT}")
+    print(f"  Docs: http://localhost:{SERVER_PORT}/docs")
 
     yield
 

@@ -149,8 +149,8 @@ RAM_PER_WORKER_MB: int = int(os.getenv("RAM_PER_WORKER_MB", "800"))
 SERVER_PORT: int = int(os.getenv("SERVER_PORT", "8080"))
 
 # When set to false (0/false/no), the server skips mounting the static UI
-# assets and the GET / route — useful for headless / API-only deployments
-SERVE_UI: bool = os.getenv("SERVE_UI", "true").lower() not in ("0", "false", "no")
+# assets and the GET / route - useful for headless / API-only deployments
+SERVE_UI: bool = os.getenv("SERVE_UI", "false").lower() not in ("0", "false", "no")
 
 # Directory for per-run activity logs (<LOG_RUNS_DIR>/<run_id>.txt)
 LOG_RUNS_DIR: str = os.path.abspath(os.path.join(LOG_DIR, "runs"))
