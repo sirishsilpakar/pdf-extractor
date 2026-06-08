@@ -24,11 +24,17 @@ import pymupdf
 from PIL import Image
 
 from config import (
+    APPLY_TEXT_FORMATTING,
+    DEBUG_POST_PROCESS_FILE,
     ENABLE_PAGE_LEVEL_OCR_THREADS,
     OCR_DPI,
     OCR_LOW_TEXT_LENGTH_THRESHOLD,
     OCR_ON_IMAGE_AREA_THRESHOLD,
     PAGE_LEVEL_OCR_MAX_WORKERS,
+    REMOVE_ALL_NUMBERS,
+    REMOVE_FOOTERS,
+    REMOVE_HEADERS,
+    REMOVE_PAGE_NUMBERS,
 )
 from core.events import (
     ExtractionMethod,
@@ -62,7 +68,9 @@ def pool_init(queue, ocr_engine: Optional[OCREngine]) -> None:
 
 
 # Public task wrapper (top-level for pickling)
-def tracked_process_file(file_path: str, input_dir: str, output_dir: str) -> FileResult:
+def tracked_process_file(
+    file_path: str, input_dir: str, output_dir: str, settings: Optional[dict] = None
+) -> FileResult:
     """Picklable wrapper submitted to the pool via 'imap_unordered'.
 
     Emits a 'FileStartedEvent' before delegating to 'process_file'.
@@ -85,15 +93,21 @@ def tracked_process_file(file_path: str, input_dir: str, output_dir: str) -> Fil
         output_dir_root=output_dir,
         ocr_engine=_OCR_ENGINE,
         event_queue=_WORKER_QUEUE,
+        settings=settings,
     )
 
 
-def make_task_fn(input_dir: str, output_dir: str):
+def make_task_fn(input_dir: str, output_dir: str, settings: Optional[dict] = None):
     """Return a 'partial' of 'tracked_process_file' bound to dirs.
 
     Using 'partial' rather than a lambda preserves picklability
     """
-    return partial(tracked_process_file, input_dir=input_dir, output_dir=output_dir)
+    return partial(
+        tracked_process_file,
+        input_dir=input_dir,
+        output_dir=output_dir,
+        settings=settings,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -165,7 +179,10 @@ def process_page(
             if should_ocr:
                 meta["reason"] = "high_image_ratio"
             else:
-                text = page.get_text("text")
+                # Get the text content along with the page dict for post processing
+                # sort=True is used to get the text content in the correct order
+                text = page.get_text("text", sort=True)
+                meta["page_dict"] = page.get_text("dict", sort=True)
                 if (
                     len(text.strip()) < OCR_LOW_TEXT_LENGTH_THRESHOLD
                     and not disable_ocr
@@ -192,6 +209,8 @@ def process_page(
                     text = result.text
                     if result.confidence is not None:
                         meta["confidence"] = result.confidence
+                    if hasattr(result, "page_dict") and result.page_dict:
+                        meta["page_dict"] = result.page_dict
 
             meta["char_count"] = len(text)
 
@@ -262,6 +281,7 @@ def process_file(
     output_dir_root: str = "extracted_files",
     ocr_engine: Optional[OCREngine] = None,
     event_queue=None,
+    settings: Optional[dict] = None,
 ) -> FileResult:
     """Process a single PDF and return a 'FileResult'.
 
@@ -274,13 +294,12 @@ def process_file(
         output_dir_root: Root of the output directory tree.
         ocr_engine:      OCR engine to use; 'None' disables OCR entirely.
         event_queue:     Multiprocessing queue for page-done events.
+        settings:        Optional configuration overrides for processing.
 
     Returns:
         'FileResult' dataclass (always returned, never raises)
     """
     import core.transform as transform
-
-    profiler = transform.DocProfiler(threshold=0.5)
 
     start = time.time()
 
@@ -290,9 +309,6 @@ def process_file(
 
         with pymupdf.open(file_path) as doc:
             num_pages = doc.page_count
-
-            # Header footer profiler
-            profiler.profile_document(doc)
 
         basename = os.path.basename(file_path)
         pid = os.getpid()
@@ -326,12 +342,29 @@ def process_file(
         # Aggregate
         full_text_parts: list[str] = []
         metadata_report: list[dict] = []
+        page_dicts: list[dict] = []
         ocr_count = direct_count = 0
 
         for i, res in enumerate(results):
             if res is None:
                 continue
             txt, method, meta = res
+
+            page_dict = meta.pop("page_dict", None)
+            if page_dict:
+                page_dicts.append(page_dict)
+            else:
+                # In case the page_dict is not available, we append a default page_dict
+                # This can happen if the OCR engine is not able to extract the page_dict
+                page_dicts.append(
+                    {
+                        "height": 0,
+                        "blocks": [
+                            {"type": 0, "lines": [{"bbox": [0, 0, 0, 0], "text": txt}]}
+                        ],
+                    }
+                )
+
             full_text_parts.append(txt)
             metadata_report.append({"page": i + 1, "method": method, "metadata": meta})
             if method == ExtractionMethod.OCR.value:
@@ -400,14 +433,35 @@ def process_file(
             overall_confidence = 0.0
 
         # Write output files
-        final_text = transform.preprocess_text(
-            "".join(full_text_parts), profiler.noise_lines
-        )
         out_dir = os.path.join(output_dir_root, subfolder)
         out_txt = os.path.join(out_dir, base_name_no_ext + ".txt")
         out_meta = os.path.join(out_dir, base_name_no_ext + ".meta.json")
 
         os.makedirs(os.path.dirname(out_txt), exist_ok=True)
+
+        # For post processing set the default config from env var
+        sanitizer_config = {
+            "remove_header": REMOVE_HEADERS,
+            "remove_footer": REMOVE_FOOTERS,
+            "remove_page_numbers": REMOVE_PAGE_NUMBERS,
+            "remove_numeric_values": REMOVE_ALL_NUMBERS,
+            "apply_text_formatting": APPLY_TEXT_FORMATTING,
+            "debug_visualize": DEBUG_POST_PROCESS_FILE,
+            "debug_filename": os.path.join(out_dir, base_name_no_ext + "_debug.html"),
+        }
+        if settings:
+            sanitizer_config.update(settings)
+
+        sanitizer = transform.DocumentSanitizer(config=sanitizer_config)
+
+        # Sanitize / post process the page based on the page_dict
+        # Which uses the bbox information of the text elements to remove headers, footers and page numbers
+        # Then join the final cleaned pages for the final extracted text
+        clean_pages = sanitizer.process_pages(page_dicts)
+        join_char = (
+            " " if sanitizer._get_bool_config("apply_text_formatting") else "\n\n"
+        )
+        final_text = join_char.join(clean_pages)
 
         with open(out_txt, "w", encoding="utf-8") as fh:
             fh.write(final_text)

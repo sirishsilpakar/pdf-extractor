@@ -66,22 +66,84 @@ class TesseractOCREngine(OCREngine):
 
             words = []
             confidences = []
+            blocks_map = {}
+
             for i, word in enumerate(data.get("text", [])):
                 word = word.strip()
-                if word:
-                    conf = data["conf"][i]
-                    if conf != "-1":
-                        words.append(word)
-                        try:
-                            # Tesseract conf is 0-100 and we want 0.0-1.0
-                            confidences.append(float(conf) / 100.0)
-                        except ValueError:
-                            pass
+                if not word:
+                    continue
+
+                conf = data["conf"][i]
+                if conf != "-1":
+                    words.append(word)
+                    try:
+                        confidences.append(float(conf) / 100.0)
+                    except ValueError:
+                        pass
+
+                    b_num = data["block_num"][i]
+
+                    # Unique line identifier within block
+                    l_num = (data["par_num"][i], data["line_num"][i])
+
+                    left = data["left"][i]
+                    top = data["top"][i]
+                    right = left + data["width"][i]
+                    bottom = top + data["height"][i]
+
+                    if b_num not in blocks_map:
+                        blocks_map[b_num] = {}
+
+                    # Build the lines and group them by paragraph and line number
+                    # so that it matches the expected format of "blocks" in the OCRResult
+                    if l_num not in blocks_map[b_num]:
+                        blocks_map[b_num][l_num] = {
+                            "words": [],
+                            "x0": left,
+                            "y0": top,
+                            "x1": right,
+                            "y1": bottom,
+                        }
+                    else:
+                        l_data = blocks_map[b_num][l_num]
+                        l_data["x0"] = min(l_data["x0"], left)
+                        l_data["y0"] = min(l_data["y0"], top)
+                        l_data["x1"] = max(l_data["x1"], right)
+                        l_data["y1"] = max(l_data["y1"], bottom)
+
+                    blocks_map[b_num][l_num]["words"].append(word)
+
+            page_blocks = []
+            for b_num in sorted(blocks_map.keys()):
+                block_lines = []
+                # Sort lines by paragraph and line number
+                for l_num in sorted(blocks_map[b_num].keys()):
+                    l_data = blocks_map[b_num][l_num]
+                    block_lines.append(
+                        {
+                            "bbox": (
+                                l_data["x0"],
+                                l_data["y0"],
+                                l_data["x1"],
+                                l_data["y1"],
+                            ),
+                            "text": " ".join(l_data["words"]),
+                        }
+                    )
+                page_blocks.append({"type": 0, "lines": block_lines})
+
+            page_dict = {
+                "width": float(image.width),
+                "height": float(image.height),
+                "blocks": page_blocks,
+            }
 
             text = " ".join(words)
             avg_conf = sum(confidences) / len(confidences) if confidences else None
 
-            return OCRResult(text=text, engine=self.name, confidence=avg_conf)
+            return OCRResult(
+                text=text, engine=self.name, confidence=avg_conf, page_dict=page_dict
+            )
 
         except ImportError as exc:
             logger.error("pytesseract not installed: %s", exc)
