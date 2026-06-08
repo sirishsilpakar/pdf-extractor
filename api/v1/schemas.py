@@ -296,4 +296,3 @@ class ResultTreeResponse(BaseModel):
             pages=pages,
             total=data["total"],
         )
-
