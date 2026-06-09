@@ -99,6 +99,29 @@ else:
 # Ensure BASE_DIR exists
 os.makedirs(BASE_DIR, exist_ok=True)
 
+REMOVE_HEADERS = os.getenv("REMOVE_HEADERS", "false").lower() in ("1", "true", "yes")
+REMOVE_FOOTERS = os.getenv("REMOVE_FOOTERS", "false").lower() in ("1", "true", "yes")
+REMOVE_PAGE_NUMBERS = os.getenv("REMOVE_PAGE_NUMBERS", "false").lower() in (
+    "1",
+    "true",
+    "yes",
+)
+REMOVE_ALL_NUMBERS = os.getenv("REMOVE_ALL_NUMBERS", "false").lower() in (
+    "1",
+    "true",
+    "yes",
+)
+APPLY_TEXT_FORMATTING = os.getenv("APPLY_TEXT_FORMATTING", "true").lower() in (
+    "1",
+    "true",
+    "yes",
+)
+DEBUG_POST_PROCESS_FILE = os.getenv("DEBUG_POST_PROCESS_FILE", "false").lower() in (
+    "1",
+    "true",
+    "yes",
+)
+
 # SQLite database path — override with EXTRACTOR_DB_PATH env var
 DB_PATH = os.path.abspath(
     os.getenv("EXTRACTOR_DB_PATH", os.path.join(BASE_DIR, "state.db"))
@@ -146,8 +169,8 @@ RAM_PER_WORKER_MB: int = int(os.getenv("RAM_PER_WORKER_MB", "800"))
 SERVER_PORT: int = int(os.getenv("SERVER_PORT", "8080"))
 
 # When set to false (0/false/no), the server skips mounting the static UI
-# assets and the GET / route — useful for headless / API-only deployments
-SERVE_UI: bool = os.getenv("SERVE_UI", "true").lower() not in ("0", "false", "no")
+# assets and the GET / route - useful for headless / API-only deployments
+SERVE_UI: bool = os.getenv("SERVE_UI", "false").lower() not in ("0", "false", "no")
 
 # Directory for per-run activity logs (<LOG_RUNS_DIR>/<run_id>.txt)
 LOG_RUNS_DIR: str = os.path.abspath(os.path.join(LOG_DIR, "runs"))

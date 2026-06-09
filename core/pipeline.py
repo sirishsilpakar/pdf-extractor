@@ -71,7 +71,7 @@ def _configure_logging(log_dir: str) -> None:
     logging.basicConfig(
         filename=log_path,
         level=logging.INFO,
-        format="%(asctime)s %(levelname)s %(name)s — %(message)s",
+        format="%(asctime)s %(levelname)s %(name)s - %(message)s",
         force=True,
     )
 
@@ -136,6 +136,7 @@ def run_pipeline(
     db: Optional[DatabaseRepository] = None,
     run_id: Optional[str] = None,
     total_timeout_seconds: int = 0,
+    settings: Optional[dict] = None,
 ) -> None:
     """Run the PDF extraction pipeline.
 
@@ -217,7 +218,7 @@ def run_pipeline(
         files_to_process.append(fp)
 
     _log(
-        f"Total:{len(all_files)} ToProcess:{len(files_to_process)} Skipped:{skipped_count}"
+        f"Total: {len(all_files)} ToProcess: {len(files_to_process)} Skipped: {skipped_count}"
     )
 
     if not files_to_process:
@@ -230,14 +231,18 @@ def run_pipeline(
 
     # Create run record before work begins
     # Scope all extracted files for this run to their own sub-directory
-    # so that extracted_files/<run_id>/ocr/... and .../direct/... are isolated
-    run_output_dir = os.path.join(output_dir, run_id)
+    # so that extracted_files/run#_run_id/ocr/... and .../direct/... are isolated
+    run_number = db.get_next_run_number()
+    run_dir_name = f"run{run_number}_{run_id}"
+    run_output_dir = os.path.join(output_dir, run_dir_name)
     os.makedirs(run_output_dir, exist_ok=True)
 
     db.create_run(
         run_id=run_id,
         total_files=len(files_to_process),
         input_dir=input_dir,
+        run_number=run_number,
+        output_dir=run_output_dir,
     )
 
     # Pre mark all files as started in one transaction
@@ -267,7 +272,9 @@ def run_pipeline(
     consumer = threading.Thread(target=_consume, daemon=True)
     consumer.start()
 
-    task_fn = make_task_fn(input_dir=input_dir, output_dir=run_output_dir)
+    task_fn = make_task_fn(
+        input_dir=input_dir, output_dir=run_output_dir, settings=settings
+    )
 
     effective_workers = safe_worker_count(WORKERS, RAM_PER_WORKER_MB)
     _log(
@@ -401,8 +408,8 @@ def run_pipeline(
         manager.shutdown()
 
     _log(
-        f"Pipeline finished - Direct:{direct_success} OCR:{ocr_success} "
-        f"Failed:{failures} Timeouts:{timeouts}"
+        f"Pipeline finished - Direct: {direct_success} OCR: {ocr_success} "
+        f"Failed: {failures} Timeouts: {timeouts}"
     )
 
     if ocr_missing_flag.is_set():
