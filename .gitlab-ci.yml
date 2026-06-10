@@ -1,46 +1,45 @@
-# ---------------------------------------------------------------------------
-# PDF TextExtract — GitLab CI/CD Pipeline
+# PDF TextExtract - GitLab CI/CD Pipeline
 #
 # Lint jobs (stage 1, run in parallel):
-#   lint:black  — format check
-#   lint:isort  — import order check
-#   lint:flake8 — style and bug check
+#   lint:black  - format check
+#   lint:isort  - import order check
+#   lint:flake8 - style and bug check
 #
 # Test jobs (stage 2, run after all lint passes):
-#   test:unit   — core/, db/, services/
-#   test:api    — api/ integration tests
+#   test:unit   - core/, db/, services/
+#   test:api    - api/ integration tests
 #
-# Build jobs (stage 3, run after tests — main/tags only):
-#   build:linux   — compiles Linux binary via PyInstaller, uploads to Package Registry
-#   build:mac     — compiles macOS binary via PyInstaller, uploads to Package Registry
-#   build:windows — compiles Windows .exe via PyInstaller, uploads to Package Registry
+# Build jobs (stage 3, run after tests - main/tags only):
+#   build:linux   - compiles Linux binary via PyInstaller, uploads to Package Registry
+#   build:mac     - compiles macOS binary via PyInstaller, uploads to Package Registry
+#   build:windows - compiles Windows .exe via PyInstaller, uploads to Package Registry
 #
 # ---------------------------------------------------------------------------
-# RUNNER TAG CONFIGURATION (self-hosted GitLab instance)
+# Runner Tag Configuration (self-hosted GitLab instance)
 # ---------------------------------------------------------------------------
 # This project runs on a self-hosted GitLab instance (gitlab.uni-marburg.de).
 # GitLab.com SaaS runner tags (saas-linux-*, saas-macos-*) are NOT available.
 #
 # You must register GitLab Runner agents on machines of each OS and tag them:
-#   Linux   → register runner with tag: linux
-#   macOS   → register runner with tag: macos
-#   Windows → register runner with tag: windows
+#   Linux   -> register runner with tag: linux
+#   macOS   -> register runner with tag: macos
+#   Windows -> register runner with tag: windows
 #
 # To register a runner:
-#   1. Go to: Project → Settings → CI/CD → Runners → New project runner
+#   1. Go to: Project -> Settings -> CI/CD -> Runners -> New project runner
 #   2. Add the OS-specific tag (linux / macos / windows)
 #   3. On the target machine, install gitlab-runner and run:
 #        gitlab-runner register --url https://gitlab.uni-marburg.de --token <TOKEN>
 #      Choose executor:
-#        Linux   → docker  (image: python:3.11)
-#        macOS   → shell   (Homebrew/system Python used directly)
-#        Windows → shell   (PowerShell, Python must be installed)
+#        Linux   -> docker  (image: python:3.11)
+#        macOS   -> shell   (Homebrew/system Python used directly)
+#        Windows -> shell   (PowerShell, Python must be installed)
 # ---------------------------------------------------------------------------
 #
 # Triggered on:
 #   - MR targeting `dev` or `main`
 #   - Direct push to `dev` or `main`
-#   - Git tags (vX.Y.Z) — also triggers build stage
+#   - Git tags (vX.Y.Z) - also triggers build stage
 # ---------------------------------------------------------------------------
 
 default:
@@ -57,7 +56,6 @@ default:
 # ---------------------------------------------------------------------------
 # Trigger rules
 # ---------------------------------------------------------------------------
-
 workflow:
   rules:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event" &&
@@ -69,16 +67,14 @@ workflow:
 # ---------------------------------------------------------------------------
 # Stages
 # ---------------------------------------------------------------------------
-
 stages:
   - lint
   - test
   - build
 
 # ---------------------------------------------------------------------------
-# Lint — all three run in parallel; all must pass before tests start
+# Lint - all three run in parallel, all must pass before tests start
 # ---------------------------------------------------------------------------
-
 lint:black:
   stage: lint
   script:
@@ -101,9 +97,8 @@ lint:flake8:
   allow_failure: false
 
 # ---------------------------------------------------------------------------
-# Tests — split by layer for clear failure attribution in MR view
+# Tests - split by layer for clear failure attribution in MR view
 # ---------------------------------------------------------------------------
-
 test:unit:
   stage: test
   script:
@@ -127,19 +122,19 @@ test:api:
     expire_in: 7 days
 
 # ---------------------------------------------------------------------------
-# Build — only on main branch or semver tags, after tests pass
+# Build - only on main branch or semver tags, after tests pass
 #
 # PURPOSE: Compile the Python backend for each target OS using PyInstaller
 #          and upload the result to the GitLab Generic Package Registry.
 #          The pdf-extractor-ui CI downloads these binaries during packaging.
 #
-# NOTE: PyInstaller MUST run on the target OS — cross-compilation is not
+# NOTE: PyInstaller MUST run on the target OS - cross-compilation is not
 #       possible. Each job therefore requires a runner of the matching OS.
 # ---------------------------------------------------------------------------
 
 build:linux:
   stage: build
-  # Use the full image (not slim) — PyInstaller requires binutils/gcc
+  # Use the full image (not slim) as PyInstaller requires binutils/gcc
   image: python:3.11
   tags:
     - linux
@@ -182,7 +177,7 @@ build:linux:
 
 build:mac:
   stage: build
-  # macOS runner uses the Shell executor — no image: key.
+  # macOS runner uses the Shell executor - no image: key.
   # The runner executes scripts directly on the macOS host via bash.
   # inherit: default: false prevents the Linux image: python:3.11-slim from
   # leaking into this job (it would be ignored by a Shell executor, but
@@ -233,7 +228,7 @@ build:mac:
 
 build:windows:
   stage: build
-  # Windows runner uses the Shell executor — no image: key.
+  # Windows runner uses the Shell executor - no image: key.
   # Scripts run natively in PowerShell on the Windows host.
   # Python 3.11 must be installed on the host (or Chocolatey will install it).
   # inherit: default: false prevents the Linux default image from leaking in.
