@@ -132,7 +132,12 @@ def start() -> None:
 
     application = create_app()
 
-    if is_prod:
+    port_file_env = os.getenv("PORT_FILE_PATH")
+    if port_file_env:
+        port_file = Path(port_file_env)
+        # Ensure parent directory exists (e.g. if writing to a custom app directory)
+        port_file.parent.mkdir(parents=True, exist_ok=True)
+    elif is_prod:
         # Production env uses user configuration folder to avoid permissions/signing issues
         app_dir = Path.home() / ".pdf-extractor"
         app_dir.mkdir(parents=True, exist_ok=True)
