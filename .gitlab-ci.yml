@@ -195,7 +195,13 @@ build:mac:
     # Ensure Homebrew Python 3.11 and PyInstaller are available.
     # The macOS runner should have Homebrew installed.
     - python3 -m venv --without-pip .venv
-    - curl -sS https://bootstrap.pypa.io/get-pip.py | .venv/bin/python3
+    - |
+      PYTHON_VERSION=$(python3 -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')")
+      if [ "$PYTHON_VERSION" = "3.9" ]; then
+        curl -sS https://bootstrap.pypa.io/pip/3.9/get-pip.py | .venv/bin/python3
+      else
+        curl -sS https://bootstrap.pypa.io/get-pip.py | .venv/bin/python3
+      fi
     - source .venv/bin/activate
     - pip install -e "." pyinstaller -q
   script:
