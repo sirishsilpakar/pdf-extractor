@@ -187,11 +187,17 @@ build:mac:
   tags:
     - macos
   before_script:
-    # Ensure Homebrew Python 3.11 and PyInstaller are available.
-    # The macOS runner should have Homebrew installed.
-    - python3 -m venv --without-pip .venv
+    # Append common Homebrew and system binary paths so the runner can locate Homebrew Python
+    - export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:$PATH"
     - |
-      PYTHON_VERSION=$(python3 -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')")
+      if command -v python3.11 &> /dev/null; then
+        PYTHON_EXE="python3.11"
+      else
+        PYTHON_EXE="python3"
+      fi
+      echo "Using Python executable: $PYTHON_EXE"
+      $PYTHON_EXE -m venv --without-pip .venv
+      PYTHON_VERSION=$($PYTHON_EXE -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')")
       if [ "$PYTHON_VERSION" = "3.9" ]; then
         curl -sS https://bootstrap.pypa.io/pip/3.9/get-pip.py | .venv/bin/python3
       else
