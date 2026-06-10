@@ -15,13 +15,13 @@ def build():
     project_root = os.path.dirname(os.path.abspath(__file__))
     os.chdir(project_root)
 
-    print("Building pdf-extractor-backend with PyInstaller...")
+    print("Building pdf-textract-backend with PyInstaller...")
 
     PyInstaller.__main__.run(
         [
             "server.py",
             "--name",
-            "pdf-extractor-backend",
+            "pdf-textract-backend",
             "--onedir",  # Much faster startup time than onefile, better for Electron
             "--noconfirm",  # Overwrite output directory without asking
             "--clean",
@@ -44,7 +44,7 @@ def build():
         ]
     )
 
-    print("\nBuild complete! Output is in the 'dist/pdf-extractor-backend' directory.")
+    print("\nBuild complete! Output is in the 'dist/pdf-textract-backend' directory.")
     print("When running from Electron, ensure you set:")
     print("  BASE_DIR")
     print("  TESSERACT_CMD")
