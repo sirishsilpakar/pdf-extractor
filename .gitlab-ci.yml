@@ -194,9 +194,12 @@ build:mac:
   before_script:
     # Ensure Homebrew Python 3.11 and PyInstaller are available.
     # The macOS runner should have Homebrew installed.
-    - python3 --version
-    - pip3 install -e "." pyinstaller -q
+    - python3 -m venv .venv
+    - source .venv/bin/activate
+    - pip install --upgrade pip -q
+    - pip install -e "." pyinstaller -q
   script:
+    - source .venv/bin/activate
     - echo "==> Building macOS backend binary with PyInstaller..."
     - python3 build_backend.py
     - echo "==> Verifying output..."
