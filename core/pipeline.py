@@ -245,6 +245,12 @@ def run_pipeline(
         output_dir=run_output_dir,
     )
 
+    if db is not None and hasattr(db, "save_run_log_path"):
+        from config import LOG_RUNS_DIR
+
+        log_path = os.path.join(LOG_RUNS_DIR, f"{run_id}.txt")
+        db.save_run_log_path(run_id, log_path)
+
     # Pre mark all files as started in one transaction
     db.mark_started_batch(files_to_process)
 

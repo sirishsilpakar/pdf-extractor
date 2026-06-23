@@ -459,6 +459,23 @@ class JobManager:
         """Append to log buffer then broadcast state mutation and side effect separated"""
         with self._lock:
             self._state.log.append(msg, level)
+            run_id = self._state.run_id
+            if run_id:
+                try:
+                    import os as _os
+
+                    from config import LOG_RUNS_DIR
+
+                    _os.makedirs(LOG_RUNS_DIR, exist_ok=True)
+                    log_path = _os.path.join(LOG_RUNS_DIR, f"{run_id}.txt")
+                    with open(log_path, "a", encoding="utf-8") as fh:
+                        fh.write(f"[{level.upper()}] {msg}\n")
+                except Exception as exc:
+                    import logging as _logging
+
+                    _logging.warning(
+                        "Could not append log to file for %s: %s", run_id, exc
+                    )
         self._emit({"type": "log", "message": msg, "level": level})
 
     def _emit(self, event: dict) -> None:
@@ -525,15 +542,19 @@ class JobManager:
             _os.makedirs(LOG_RUNS_DIR, exist_ok=True)
             log_path = _os.path.join(LOG_RUNS_DIR, f"{run_id}.txt")
 
-            with self._lock:
-                lines = self._state.log.snapshot()
+            # Write buffer only if the file does not already exist
+            # to prevent truncating/overwriting logs written dynamically.
+            if not _os.path.exists(log_path):
+                with self._lock:
+                    lines = self._state.log.snapshot()
 
-            with open(log_path, "w", encoding="utf-8") as fh:
-                fh.write(
-                    "\n".join(
-                        f"[{line['level'].upper()}] {line['message']}" for line in lines
+                with open(log_path, "w", encoding="utf-8") as fh:
+                    fh.write(
+                        "\n".join(
+                            f"[{line['level'].upper()}] {line['message']}"
+                            for line in lines
+                        )
                     )
-                )
 
             if db is not None and hasattr(db, "save_run_log_path"):
                 db.save_run_log_path(run_id, log_path)

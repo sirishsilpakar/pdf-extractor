@@ -49,7 +49,7 @@ TESSERACT_OEM = int(os.getenv("TESSERACT_OEM", "1"))
 TESSERACT_PSM = int(os.getenv("TESSERACT_PSM", "6"))
 
 # Per-page OCR timeout (in seconds). Slow or problematic pages will be skipped after this time.
-TESSERACT_PAGE_TIMEOUT_SECONDS = int(os.getenv("TESSERACT_PAGE_TIMEOUT_SECONDS", "30"))
+TESSERACT_PAGE_TIMEOUT_SECONDS = int(os.getenv("TESSERACT_PAGE_TIMEOUT_SECONDS", "180"))
 
 # Limit OpenMP thread usage inside libraries (e.g., Leptonica/BLAS) used by Tesseract
 # Helps prevent oversubscription when running multiple processes
