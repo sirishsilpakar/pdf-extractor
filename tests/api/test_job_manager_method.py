@@ -116,3 +116,82 @@ def test_job_manager_dynamic_method_tracking():
     assert emitted_events[-2]["file"] == "test.pdf"
     assert emitted_events[-2]["pct"] == 100
     assert emitted_events[-2]["method"] == "ocr"
+
+
+def test_job_manager_sorting():
+    jm = JobManager(broadcast_fn=lambda event: None)
+
+    file_entries = [
+        FileEntry(name="c_file.pdf", path="/path/to/c_file.pdf", size_bytes=100),
+        FileEntry(name="a_file.pdf", path="/path/to/a_file.pdf", size_bytes=200),
+        FileEntry(name="b_file.pdf", path="/path/to/b_file.pdf", size_bytes=300),
+    ]
+
+    jm._state.reset(file_entries, run_id="test_run_sorting")
+
+    # Set different statuses and progress for entries to verify sorting
+    entry_a = jm._state.find_by_name("a_file.pdf")
+    entry_a.status = FileStatus.PROCESSING
+    entry_a.progress_pct = 50
+
+    entry_b = jm._state.find_by_name("b_file.pdf")
+    entry_b.status = FileStatus.COMPLETED
+    entry_b.progress_pct = 100
+
+    entry_c = jm._state.find_by_name("c_file.pdf")
+    entry_c.status = FileStatus.QUEUED
+    entry_c.progress_pct = 0
+
+    # Sort by name asc
+    total, items = jm.get_files_page(page=1, size=10, sort_by="name", sort_order="asc")
+    assert [i["name"] for i in items] == ["a_file.pdf", "b_file.pdf", "c_file.pdf"]
+
+    # Sort by name desc
+    total, items = jm.get_files_page(page=1, size=10, sort_by="name", sort_order="desc")
+    assert [i["name"] for i in items] == ["c_file.pdf", "b_file.pdf", "a_file.pdf"]
+
+    # Sort by progress asc
+    total, items = jm.get_files_page(
+        page=1, size=10, sort_by="progress", sort_order="asc"
+    )
+    assert [i["name"] for i in items] == ["c_file.pdf", "a_file.pdf", "b_file.pdf"]
+
+    # Sort by progress desc
+    total, items = jm.get_files_page(
+        page=1, size=10, sort_by="progress", sort_order="desc"
+    )
+    assert [i["name"] for i in items] == ["b_file.pdf", "a_file.pdf", "c_file.pdf"]
+
+    # Sort by status asc (completed, processing, queued)
+    total, items = jm.get_files_page(
+        page=1, size=10, sort_by="status", sort_order="asc"
+    )
+    assert [i["name"] for i in items] == ["b_file.pdf", "a_file.pdf", "c_file.pdf"]
+
+    # Set size and method explicitly
+    entry_a.size_bytes = 200
+    entry_a.method = ExtractionMethod.DIRECT
+
+    entry_b.size_bytes = 300
+    entry_b.method = ExtractionMethod.OCR
+
+    entry_c.size_bytes = 100
+    entry_c.method = ExtractionMethod.ERROR
+
+    # Sort by size desc
+    total, items = jm.get_files_page(page=1, size=10, sort_by="size", sort_order="desc")
+    assert [i["name"] for i in items] == ["b_file.pdf", "a_file.pdf", "c_file.pdf"]
+
+    # Sort by method asc (direct < error < ocr)
+    total, items = jm.get_files_page(
+        page=1, size=10, sort_by="method", sort_order="asc"
+    )
+    assert [i["name"] for i in items] == ["a_file.pdf", "c_file.pdf", "b_file.pdf"]
+
+    # Combined sort: status asc, name desc
+    entry_a.status = FileStatus.PROCESSING
+    entry_c.status = FileStatus.PROCESSING
+    total, items = jm.get_files_page(
+        page=1, size=10, sort_by="status,name", sort_order="asc,desc"
+    )
+    assert [i["name"] for i in items] == ["b_file.pdf", "c_file.pdf", "a_file.pdf"]
