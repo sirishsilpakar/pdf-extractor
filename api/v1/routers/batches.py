@@ -57,6 +57,7 @@ class BatchFileItem(BaseModel):
     size_bytes: int
     content_hash: str | None = None
     is_processed: bool
+    method: str | None = None
 
 
 # Routes
@@ -167,6 +168,10 @@ async def list_batch_files(
             "so that the UI reflects the actual set queued for processing."
         ),
     ),
+    sort_by: str | None = Query(  # noqa: B008
+        None, description="Field to sort by: status, name, progress"
+    ),
+    sort_order: str = Query("asc", description="Sort order: asc, desc"),  # noqa: B008
 ) -> PagedResponse:
     batch = db.get_batch(batch_id)
     if batch is None:
@@ -184,6 +189,7 @@ async def list_batch_files(
             size_bytes=r["size_bytes"],
             content_hash=r["content_hash"],
             is_processed=bool(r["is_processed"]),
+            method=r["method"],
         )
         for r in rows
     ]

@@ -132,11 +132,41 @@ class _JobState:
         return list(self._files_by_name.values())
 
     def entries_page(
-        self, page: int, size: int, skip_processed: bool = False
+        self,
+        page: int,
+        size: int,
+        skip_processed: bool = False,
+        sort_by: str | None = None,
+        sort_order: str = "asc",
     ) -> tuple[int, list[FileEntry]]:
         all_e = self.all_entries()
         if skip_processed:
             all_e = [e for e in all_e if not e.is_processed]
+
+        if sort_by:
+            keys = [k.strip() for k in sort_by.split(",")]
+            orders = (
+                [o.strip().lower() for o in sort_order.split(",")] if sort_order else []
+            )
+
+            # Python sorts are stable. We sort by keys in reverse order of precedence
+            for i in reversed(range(len(keys))):
+                key = keys[i]
+                reverse = False
+                if i < len(orders) and orders[i] == "desc":
+                    reverse = True
+
+                if key == "name":
+                    all_e.sort(key=lambda e: e.name.lower(), reverse=reverse)
+                elif key == "status":
+                    all_e.sort(key=lambda e: e.status.value, reverse=reverse)
+                elif key == "progress":
+                    all_e.sort(key=lambda e: e.progress_pct, reverse=reverse)
+                elif key == "size":
+                    all_e.sort(key=lambda e: e.size_bytes, reverse=reverse)
+                elif key == "method":
+                    all_e.sort(key=lambda e: e.method.value, reverse=reverse)
+
         total = len(all_e)
         offset = (max(page, 1) - 1) * size
         return total, all_e[offset : offset + size]
