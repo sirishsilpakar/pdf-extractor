@@ -171,6 +171,7 @@ class ResultRecord(BaseModel):
     processed_at: str
     confidence: Optional[float] = None
     flags: Optional[str] = None
+    error_message: Optional[str] = None
     has_duplicate: bool = False
 
 

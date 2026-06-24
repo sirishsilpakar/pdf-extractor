@@ -9,7 +9,7 @@ maps to a list of idempotent SQL statements in '_MIGRATIONS'.  On startup
 Legacy DBs (created before versioning was introduced, 'user_version = 0')
 are detected via '_detect_legacy_version' so existing data is never lost.
 
-Current schema version: 18
+Current schema version: 20
 
 Migration history
 -----------------
@@ -28,6 +28,8 @@ Migration history
 16 'idx_et_filename' and 'idx_et_hash' dropped and recreated on 'extracted_texts'
 17 'run_number' column on 'runs' + update existing runs with run_number
 18 'output_dir' column on 'runs'
+19 'error_message' column on 'extracted_texts'
+20 'idx_et_rel_path' index on 'extracted_texts'
 """
 
 from __future__ import annotations
@@ -41,7 +43,7 @@ from typing import Any, Optional
 logger = logging.getLogger(__name__)
 
 
-_SCHEMA_VERSION = 18
+_SCHEMA_VERSION = 20
 
 # Each value is a list of SQL statements for that migration step
 # Statements are executed individually so we can catch "already exists" errors
@@ -190,6 +192,12 @@ _MIGRATIONS: dict[int, list[str]] = {
     ],
     18: [
         "ALTER TABLE runs ADD COLUMN output_dir TEXT",
+    ],
+    19: [
+        "ALTER TABLE extracted_texts ADD COLUMN error_message TEXT DEFAULT NULL",
+    ],
+    20: [
+        "CREATE INDEX IF NOT EXISTS idx_et_rel_path ON extracted_texts(rel_path)",
     ],
 }
 
