@@ -672,7 +672,7 @@ class DatabaseRepository:
                                 GROUP BY rel_path
                             )
                             SELECT e.id, e.filename, e.rel_path, e.method, e.char_count,
-                                   e.page_count, e.content_hash, e.processed_at, e.confidence, e.flags, e.run_id,
+                                   e.page_count, e.content_hash, e.processed_at, e.confidence, e.flags, e.error_message, e.run_id,
                                    rn.run_number,
                                    CASE WHEN fr.run_count > 1 THEN 1 ELSE 0 END AS has_duplicate
                             FROM extracted_texts e
@@ -694,7 +694,7 @@ class DatabaseRepository:
                             GROUP BY rel_path
                         )
                         SELECT e.id, e.filename, e.rel_path, e.method, e.char_count,
-                               e.page_count, e.content_hash, e.processed_at, e.confidence, e.flags, e.run_id,
+                               e.page_count, e.content_hash, e.processed_at, e.confidence, e.flags, e.error_message, e.run_id,
                                rn.run_number,
                                CASE WHEN fr.run_count > 1 THEN 1 ELSE 0 END AS has_duplicate
                         FROM extracted_texts e
@@ -836,6 +836,7 @@ class DatabaseRepository:
         confidence: float | None = None,
         flags: list[str] | None = None,
         txt_hash: str | None = None,
+        error_message: str | None = None,
     ) -> int:
         """Upsert an extraction record. Returns the record ID (new or existing)"""
         now = self._now()
@@ -846,8 +847,8 @@ class DatabaseRepository:
                     """
                     INSERT INTO extracted_texts
                         (run_id, source_path, filename, rel_path, txt_path, method,
-                         char_count, page_count, content_hash, processed_at, confidence, flags, txt_hash)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                         char_count, page_count, content_hash, processed_at, confidence, flags, txt_hash, error_message)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         run_id,
@@ -863,6 +864,7 @@ class DatabaseRepository:
                         confidence,
                         ",".join(flags) if flags else None,
                         txt_hash or None,
+                        error_message,
                     ),
                 )
                 conn.commit()
@@ -915,7 +917,7 @@ class DatabaseRepository:
                     )
                     SELECT e.id, e.run_id, r.run_number, e.source_path, e.filename, e.rel_path,
                            e.txt_path, e.method, e.char_count, e.page_count,
-                           e.content_hash, e.processed_at, e.confidence, e.flags,
+                           e.content_hash, e.processed_at, e.confidence, e.flags, e.error_message,
                            r.started_at AS run_started_at,
                            CASE WHEN fr.run_count > 1 THEN 1 ELSE 0 END AS has_duplicate
                     FROM extracted_texts e
@@ -1460,11 +1462,19 @@ class DatabaseRepository:
 
         base_query = """
             SELECT bf.batch_id, bf.name, bf.rel_path, bf.size_bytes, bf.content_hash,
-                   CASE WHEN et.content_hash IS NOT NULL THEN 1 ELSE 0 END AS is_processed,
-                   COALESCE(et.method, 'undefined') AS method
+                   CASE WHEN et.id IS NOT NULL THEN 1 ELSE 0 END AS is_processed,
+                   COALESCE(et.method, 'undefined') AS method,
+                   COALESCE(et.flags, '') AS flags,
+                   COALESCE(et.error_message, '') AS error_message
               FROM batch_files bf
-              LEFT JOIN (SELECT content_hash, MAX(method) as method FROM extracted_texts GROUP BY content_hash) et
-                ON bf.content_hash = et.content_hash
+              LEFT JOIN extracted_texts et ON et.id = (
+                  SELECT id
+                    FROM extracted_texts
+                   WHERE (bf.content_hash IS NOT NULL AND content_hash = bf.content_hash)
+                      OR rel_path = bf.rel_path
+                   ORDER BY processed_at DESC
+                   LIMIT 1
+              )
              WHERE bf.batch_id = ?
         """
 

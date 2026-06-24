@@ -58,6 +58,8 @@ class BatchFileItem(BaseModel):
     content_hash: str | None = None
     is_processed: bool
     method: str | None = None
+    flags: str | None = None
+    error_message: str | None = None
 
 
 # Routes
@@ -192,6 +194,8 @@ async def list_batch_files(
             content_hash=r["content_hash"],
             is_processed=bool(r["is_processed"]),
             method=r["method"],
+            flags=r["flags"],
+            error_message=r["error_message"],
         )
         for r in rows
     ]
