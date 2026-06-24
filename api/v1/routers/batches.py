@@ -179,7 +179,9 @@ async def list_batch_files(
 
     # Translate the API level boolean into the repository's generalised filter dict
     filters = {"is_processed": False} if skip_processed else None
-    total, rows = db.get_batch_files(batch_id, page, size, filters=filters)
+    total, rows = db.get_batch_files(
+        batch_id, page, size, filters=filters, sort_by=sort_by, sort_order=sort_order
+    )
 
     items = [
         BatchFileItem(

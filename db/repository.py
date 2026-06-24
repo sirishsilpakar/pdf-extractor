@@ -1395,6 +1395,8 @@ class DatabaseRepository:
         page: int,
         size: int,
         filters: dict | None = None,
+        sort_by: str | None = None,
+        sort_order: str = "asc",
     ) -> tuple[int, list[dict]]:
         """Return (total_count, page_rows) for a batch's file list.
 
@@ -1404,8 +1406,40 @@ class DatabaseRepository:
                   'is_processed' (bool) - True: only processed files,
                                             False: only unprocessed files.
                 Extensible for future keys (e.g. name prefix, size range).
+            sort_by: Optional columns to sort by, comma-separated (e.g. 'status,name').
+            sort_order: Directions for sort columns, comma-separated (e.g. 'asc,desc').
         """
         offset = (page - 1) * size
+
+        # Build ORDER BY clause for multi-column sorting
+        order_clauses = []
+        keys = [k.strip() for k in sort_by.split(",")] if sort_by else []
+        orders = (
+            [o.strip().lower() for o in sort_order.split(",")] if sort_order else []
+        )
+
+        for i, key in enumerate(keys):
+            direction = "ASC"
+            if i < len(orders) and orders[i] == "desc":
+                direction = "DESC"
+
+            col = None
+            if key == "name":
+                col = "name"
+            elif key in ("status", "progress"):
+                col = "is_processed"
+            elif key == "size":
+                col = "size_bytes"
+            elif key == "method":
+                col = "method"
+
+            if col:
+                order_clauses.append(f"sub.{col} {direction}")
+
+        if not order_clauses:
+            order_clauses.append("sub.rel_path ASC")
+
+        order_by_sql = "ORDER BY " + ", ".join(order_clauses)
 
         # Build extra WHERE clauses applied on top of the subquery
         having_clauses: list[str] = []
@@ -1418,9 +1452,10 @@ class DatabaseRepository:
 
         base_query = """
             SELECT bf.batch_id, bf.name, bf.rel_path, bf.size_bytes, bf.content_hash,
-                   CASE WHEN et.content_hash IS NOT NULL THEN 1 ELSE 0 END AS is_processed
+                   CASE WHEN et.content_hash IS NOT NULL THEN 1 ELSE 0 END AS is_processed,
+                   COALESCE(et.method, 'undefined') AS method
               FROM batch_files bf
-              LEFT JOIN (SELECT DISTINCT content_hash FROM extracted_texts) et
+              LEFT JOIN (SELECT content_hash, MAX(method) as method FROM extracted_texts GROUP BY content_hash) et
                 ON bf.content_hash = et.content_hash
              WHERE bf.batch_id = ?
         """
@@ -1436,7 +1471,7 @@ class DatabaseRepository:
                     f"""
                     SELECT * FROM ({base_query}) sub
                     {having_sql}
-                    ORDER BY rel_path
+                    {order_by_sql}
                     LIMIT ? OFFSET ?
                     """,
                     (batch_id, size, offset),

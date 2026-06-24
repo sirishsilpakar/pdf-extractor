@@ -296,11 +296,18 @@ class JobManager:
             }
 
     def get_files_page(
-        self, page: int = 1, size: int = 50, skip_processed: bool = False
+        self,
+        page: int = 1,
+        size: int = 50,
+        skip_processed: bool = False,
+        sort_by: str | None = None,
+        sort_order: str = "asc",
     ) -> tuple[int, list[dict]]:
         """Returns the file pages as (total, [file_entry_dict, ...])"""
         with self._lock:
-            total, entries = self._state.entries_page(page, size, skip_processed)
+            total, entries = self._state.entries_page(
+                page, size, skip_processed, sort_by=sort_by, sort_order=sort_order
+            )
         return total, [e.to_dict() for e in entries]
 
     def handle_event(self, event: dict) -> None:
