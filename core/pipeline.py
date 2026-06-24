@@ -372,6 +372,22 @@ def run_pipeline(
                     if result.outcome == PipelineOutcome.TIMEOUT:
                         timeouts += 1
 
+                    db.save_extracted_text(
+                        source_path=result.file_path,
+                        filename=basename,
+                        rel_path=result.rel_path or basename,
+                        txt_path="",
+                        method=result.method.value,
+                        char_count=0,
+                        page_count=0,
+                        content_hash=result.content_hash,
+                        run_id=run_id,
+                        confidence=0.0,
+                        flags=result.flags,
+                        txt_hash="",
+                        error_message=result.message,
+                    )
+
                 # Build and emit file completion event
                 event_cls = {
                     "file_done": FileDoneEvent,
