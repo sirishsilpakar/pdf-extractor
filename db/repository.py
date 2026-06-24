@@ -30,6 +30,7 @@ Migration history
 18 'output_dir' column on 'runs'
 19 'error_message' column on 'extracted_texts'
 20 'idx_et_rel_path' index on 'extracted_texts'
+21 'idx_et_path_time' and 'idx_et_hash_time' index on 'extracted_texts'
 """
 
 from __future__ import annotations
@@ -43,7 +44,7 @@ from typing import Any, Optional
 logger = logging.getLogger(__name__)
 
 
-_SCHEMA_VERSION = 20
+_SCHEMA_VERSION = 21
 
 # Each value is a list of SQL statements for that migration step
 # Statements are executed individually so we can catch "already exists" errors
@@ -198,6 +199,12 @@ _MIGRATIONS: dict[int, list[str]] = {
     ],
     20: [
         "CREATE INDEX IF NOT EXISTS idx_et_rel_path ON extracted_texts(rel_path)",
+    ],
+    21: [
+        "DROP INDEX IF EXISTS idx_et_hash",
+        "DROP INDEX IF EXISTS idx_et_rel_path",
+        "CREATE INDEX IF NOT EXISTS idx_et_hash_time ON extracted_texts(content_hash, processed_at DESC, id DESC)",
+        "CREATE INDEX IF NOT EXISTS idx_et_path_time ON extracted_texts(rel_path, processed_at DESC, id DESC)",
     ],
 }
 
@@ -1471,7 +1478,7 @@ class DatabaseRepository:
                   SELECT id
                     FROM extracted_texts
                    WHERE (bf.content_hash IS NOT NULL AND content_hash = bf.content_hash)
-                      OR rel_path = bf.rel_path
+                      OR ((content_hash IS NULL OR content_hash = '') AND rel_path = bf.rel_path)
                    ORDER BY processed_at DESC
                    LIMIT 1
               )
