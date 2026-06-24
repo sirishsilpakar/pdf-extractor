@@ -51,6 +51,13 @@ pymupdf.TOOLS.mupdf_display_errors(False)
 
 logger = logging.getLogger(__name__)
 
+
+class FileValidationError(Exception):
+    """Raised when a file fails pre-validation checks (e.g. empty, protected)"""
+
+    pass
+
+
 # Per-worker-process singletons set once by _pool_init, never pickled per-task
 _WORKER_QUEUE: Optional["multiprocessing.Queue"] = None  # type: ignore[name-defined]
 _OCR_ENGINE: Optional[OCREngine] = None
@@ -302,12 +309,22 @@ def process_file(
     import core.transform as transform
 
     start = time.time()
-
+    rel_path = ""
     try:
         rel_path = os.path.relpath(file_path, input_dir_root)
         base_name_no_ext = os.path.splitext(rel_path)[0]
 
+        # Pre-validation checks
+        if not os.path.exists(file_path):
+            raise FileValidationError("File does not exist or is inaccessible")
+        if not os.access(file_path, os.R_OK):
+            raise FileValidationError("Permission denied: file is inaccessible")
+        if os.path.getsize(file_path) == 0:
+            raise FileValidationError("Empty file")
+
         with pymupdf.open(file_path) as doc:
+            if doc.is_encrypted:
+                raise FileValidationError("File is password-protected or encrypted")
             num_pages = doc.page_count
 
         basename = os.path.basename(file_path)
@@ -505,9 +522,25 @@ def process_file(
             flags=flags,
         )
 
-    except Exception as exc:
+    except FileValidationError as exc:
         elapsed = time.time() - start
-        logger.exception("process_file failed for %s: %s", file_path, exc)
+        logger.warning("File extraction failed for %s: %s", file_path, exc)
+
+        exc_msg = str(exc).lower()
+        flags = []
+        if "empty file" in exc_msg:
+            flags.append("empty_file")
+        elif "password-protected" in exc_msg or "encrypted" in exc_msg:
+            flags.append("protected_file")
+        elif (
+            "does not exist" in exc_msg
+            or "permission denied" in exc_msg
+            or "inaccessible" in exc_msg
+        ):
+            flags.append("inaccessible_file")
+        else:
+            flags.append("error")
+
         return FileResult(
             file_path=file_path,
             outcome=PipelineOutcome.FAILURE,
@@ -516,10 +549,32 @@ def process_file(
             char_count=0,
             method=ExtractionMethod.ERROR,
             page_count=0,
-            rel_path="",
+            rel_path=rel_path or os.path.basename(file_path),
             txt_path="",
             content_hash="",
             txt_hash="",
-            confidence=None,
-            flags=None,
+            confidence=0.0,
+            flags=flags,
+        )
+    except Exception as exc:
+        elapsed = time.time() - start
+        logger.exception("process_file crashed for %s: %s", file_path, exc)
+
+        exc_msg = str(exc).lower()
+        flags = ["error"]
+
+        return FileResult(
+            file_path=file_path,
+            outcome=PipelineOutcome.FAILURE,
+            message=f"File extraction crashed: {exc}",
+            elapsed=elapsed,
+            char_count=0,
+            method=ExtractionMethod.ERROR,
+            page_count=0,
+            rel_path=rel_path or os.path.basename(file_path),
+            txt_path="",
+            content_hash="",
+            txt_hash="",
+            confidence=0.0,
+            flags=flags,
         )
