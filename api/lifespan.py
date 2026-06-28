@@ -31,7 +31,7 @@ async def lifespan(app: FastAPI):
 
         engine = get_ocr_engine()
         print(f"[startup] OCR engine: {engine.name}")
-    except RuntimeError as exc:
+    except Exception as exc:
         print(f"[startup] WARNING: {exc}")
         print("[startup] OCR is disabled - direct extraction only.")
 

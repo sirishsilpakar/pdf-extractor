@@ -339,8 +339,11 @@ def run_pipeline(
     )
 
     # Persist per-run summary
-    summary_dir = "benchmark_output"
+    from config import BENCHMARK_DIR
+
+    summary_dir = BENCHMARK_DIR
     os.makedirs(summary_dir, exist_ok=True)
+
     try:
         with open(
             os.path.join(summary_dir, "pipeline_summary.csv"),

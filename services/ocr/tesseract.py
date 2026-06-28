@@ -7,6 +7,7 @@ the 'multiprocessing.Pool' initialiser round-trip without issues
 from __future__ import annotations
 
 import logging
+import os
 
 from services.ocr.base import OCREngine, OCRResult
 
@@ -43,9 +44,16 @@ class TesseractOCREngine(OCREngine):
         try:
             import pytesseract  # noqa: F401
 
-            pytesseract.get_tesseract_version()
+            custom_cmd = os.getenv("TESSERACT_CMD")
+            if custom_cmd:
+                logger.debug("Using custom Tesseract command: %s", custom_cmd)
+                pytesseract.pytesseract.tesseract_cmd = custom_cmd
+
+            version = pytesseract.get_tesseract_version()
+            logger.info("Tesseract engine available (version: %s)", version)
             return True
-        except Exception:
+        except Exception as exc:
+            logger.error("Tesseract engine check failed: %s", exc)
             return False
 
     def run(self, image: "PIL.Image.Image", **kwargs) -> OCRResult:
@@ -55,6 +63,10 @@ class TesseractOCREngine(OCREngine):
 
         try:
             import pytesseract
+
+            custom_cmd = os.getenv("TESSERACT_CMD")
+            if custom_cmd:
+                pytesseract.pytesseract.tesseract_cmd = custom_cmd
 
             data = pytesseract.image_to_data(
                 image,

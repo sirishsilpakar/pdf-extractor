@@ -1,18 +1,45 @@
-# ---------------------------------------------------------------------------
-# PDF TextExtract — GitLab CI/CD Pipeline
+# PDF TextExtract - GitLab CI/CD Pipeline
 #
 # Lint jobs (stage 1, run in parallel):
-#   lint:black  — format check
-#   lint:isort  — import order check
-#   lint:flake8 — style and bug check
+#   lint:black  - format check
+#   lint:isort  - import order check
+#   lint:flake8 - style and bug check
 #
 # Test jobs (stage 2, run after all lint passes):
-#   test:unit   — core/, db/, services/
-#   test:api    — api/ integration tests
+#   test:unit   - core/, db/, services/
+#   test:api    - api/ integration tests
+#
+# Build jobs (stage 3, run after tests - main/tags only):
+#   build:linux   - compiles Linux binary via PyInstaller, uploads to Package Registry
+#   build:mac     - compiles macOS binary via PyInstaller, uploads to Package Registry
+#   build:windows - compiles Windows .exe via PyInstaller, uploads to Package Registry
+#
+# ---------------------------------------------------------------------------
+# Runner Tag Configuration (self-hosted GitLab instance)
+# ---------------------------------------------------------------------------
+# This project runs on a self-hosted GitLab instance (gitlab.uni-marburg.de).
+# GitLab.com SaaS runner tags (saas-linux-*, saas-macos-*) are NOT available.
+#
+# You must register GitLab Runner agents on machines of each OS and tag them:
+#   Linux   -> register runner with tag: linux
+#   macOS   -> register runner with tag: macos
+#   Windows -> register runner with tag: windows
+#
+# To register a runner:
+#   1. Go to: Project -> Settings -> CI/CD -> Runners -> New project runner
+#   2. Add the OS-specific tag (linux / macos / windows)
+#   3. On the target machine, install gitlab-runner and run:
+#        gitlab-runner register --url https://gitlab.uni-marburg.de --token <TOKEN>
+#      Choose executor:
+#        Linux   -> docker  (image: python:3.11)
+#        macOS   -> shell   (Homebrew/system Python used directly)
+#        Windows -> shell   (PowerShell, Python must be installed)
+# ---------------------------------------------------------------------------
 #
 # Triggered on:
 #   - MR targeting `dev` or `main`
 #   - Direct push to `dev` or `main`
+#   - Git tags (vX.Y.Z) - also triggers build stage
 # ---------------------------------------------------------------------------
 
 default:
@@ -29,26 +56,25 @@ default:
 # ---------------------------------------------------------------------------
 # Trigger rules
 # ---------------------------------------------------------------------------
-
 workflow:
   rules:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event" &&
           ($CI_MERGE_REQUEST_TARGET_BRANCH_NAME == "dev" ||
            $CI_MERGE_REQUEST_TARGET_BRANCH_NAME == "main")
-    - if: $CI_COMMIT_BRANCH == "dev" || $CI_COMMIT_BRANCH == "main" || $CI_COMMIT_BRANCH == "ci/gitlab-pipeline-and-linting"
+    - if: $CI_COMMIT_BRANCH == "dev" || $CI_COMMIT_BRANCH == "main"
+    - if: $CI_COMMIT_TAG =~ /^v\d+\.\d+\.\d+/   # semver tags trigger build stage
 
 # ---------------------------------------------------------------------------
 # Stages
 # ---------------------------------------------------------------------------
-
 stages:
   - lint
   - test
+  - build
 
 # ---------------------------------------------------------------------------
-# Lint — all three run in parallel; all must pass before tests start
+# Lint - all three run in parallel, all must pass before tests start
 # ---------------------------------------------------------------------------
-
 lint:black:
   stage: lint
   script:
@@ -71,9 +97,8 @@ lint:flake8:
   allow_failure: false
 
 # ---------------------------------------------------------------------------
-# Tests — split by layer for clear failure attribution in MR view
+# Tests - split by layer for clear failure attribution in MR view
 # ---------------------------------------------------------------------------
-
 test:unit:
   stage: test
   script:
@@ -95,3 +120,171 @@ test:api:
     reports:
       junit: report-api.xml
     expire_in: 7 days
+
+# ---------------------------------------------------------------------------
+# Build - only on main branch or semver tags, after tests pass
+#
+# PURPOSE: Compile the Python backend for each target OS using PyInstaller
+#          and upload the result to the GitLab Generic Package Registry.
+#          The pdf-extractor-ui CI downloads these binaries during packaging.
+#
+# NOTE: PyInstaller MUST run on the target OS - cross-compilation is not
+#       possible. Each job therefore requires a runner of the matching OS.
+# ---------------------------------------------------------------------------
+
+build:linux:
+  stage: build
+  # Use the full image (not slim) as PyInstaller requires binutils/gcc
+  image: python:3.11
+  tags:
+    - linux
+  # Separate cache key so pip packages for building don't mix with lint/test
+  cache:
+    key: "build-linux-$CI_COMMIT_REF_SLUG"
+    paths:
+      - .pip-cache/
+  before_script:
+    # Install system build tools needed by some Python C-extensions
+    - apt-get update -qy && apt-get install -y --no-install-recommends binutils
+    - pip install --cache-dir .pip-cache -e "." pyinstaller -q
+  script:
+    - echo "==> Building Linux backend binary with PyInstaller..."
+    - python build_backend.py
+    - echo "==> Verifying output..."
+    - test -f dist/pdf-textract-backend/pdf-textract-backend
+    - echo "==> Build successful. Binary size:"
+    - du -sh dist/pdf-textract-backend/
+    # Upload compiled binary to Package Registry for consumption by pdf-extractor-ui
+    - |
+      PACKAGE_VERSION="${CI_COMMIT_TAG:-dev-${CI_COMMIT_SHORT_SHA}}"
+      echo "==> Uploading Linux binary to Package Registry as version: $PACKAGE_VERSION"
+      tar -czf pdf-textract-backend-linux-${PACKAGE_VERSION}.tar.gz -C dist pdf-textract-backend
+      curl --fail --silent --show-error \
+           --header "JOB-TOKEN: $CI_JOB_TOKEN" \
+           --upload-file pdf-textract-backend-linux-${PACKAGE_VERSION}.tar.gz \
+           "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/generic/pdf-textract-backend/${PACKAGE_VERSION}/pdf-textract-backend-linux-${PACKAGE_VERSION}.tar.gz"
+      echo "==> Upload complete."
+  rules:
+    # Only build on main and tags not on dev or MRs (too expensive for every commit)
+    - if: $CI_COMMIT_BRANCH == "main"
+    - if: $CI_COMMIT_TAG =~ /^v\d+\.\d+\.\d+/
+  artifacts:
+    name: "pdf-textract-backend-linux-$CI_COMMIT_REF_SLUG"
+    expire_in: 7 days
+    paths:
+      - dist/pdf-textract-backend/
+    when: on_success
+
+build:mac:
+  stage: build
+  # macOS runner uses the Shell executor - no image: key.
+  # The runner executes scripts directly on the macOS host via bash.
+  # inherit: default: false prevents the Linux image: python:3.11-slim from
+  # leaking into this job (it would be ignored by a Shell executor, but
+  # explicitly opting out is cleaner and avoids confusion).
+  inherit:
+    default: false
+  tags:
+    - macos
+  before_script:
+    # Append common Homebrew and system binary paths so the runner can locate Homebrew Python
+    - export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:$PATH"
+    - |
+      if command -v python3.11 &> /dev/null; then
+        PYTHON_EXE="python3.11"
+      else
+        PYTHON_EXE="python3"
+      fi
+      echo "Using Python executable: $PYTHON_EXE"
+      $PYTHON_EXE -m venv --without-pip .venv
+      PYTHON_VERSION=$($PYTHON_EXE -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')")
+      if [ "$PYTHON_VERSION" = "3.9" ]; then
+        curl -sS https://bootstrap.pypa.io/pip/3.9/get-pip.py | .venv/bin/python3
+      else
+        curl -sS https://bootstrap.pypa.io/get-pip.py | .venv/bin/python3
+      fi
+    - source .venv/bin/activate
+    - pip install -e "." pyinstaller -q
+  script:
+    - source .venv/bin/activate
+    - echo "==> Building macOS backend binary with PyInstaller..."
+    - python3 build_backend.py
+    - echo "==> Verifying output..."
+    - test -f dist/pdf-textract-backend/pdf-textract-backend
+    - echo "==> Build successful. Binary size:"
+    - du -sh dist/pdf-textract-backend/
+    - |
+      PACKAGE_VERSION="${CI_COMMIT_TAG:-dev-${CI_COMMIT_SHORT_SHA}}"
+      echo "==> Uploading macOS binary to Package Registry as version: $PACKAGE_VERSION"
+      tar -czf pdf-textract-backend-mac-${PACKAGE_VERSION}.tar.gz -C dist pdf-textract-backend
+      curl --fail --silent --show-error \
+           --header "JOB-TOKEN: $CI_JOB_TOKEN" \
+           --upload-file pdf-textract-backend-mac-${PACKAGE_VERSION}.tar.gz \
+           "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/generic/pdf-textract-backend/${PACKAGE_VERSION}/pdf-textract-backend-mac-${PACKAGE_VERSION}.tar.gz"
+      echo "==> Upload complete."
+  rules:
+    - if: $CI_COMMIT_BRANCH == "main"
+    - if: $CI_COMMIT_TAG =~ /^v\d+\.\d+\.\d+/
+  artifacts:
+    name: "pdf-textract-backend-mac-$CI_COMMIT_REF_SLUG"
+    expire_in: 7 days
+    paths:
+      - dist/pdf-textract-backend/
+    when: on_success
+
+build:windows:
+  stage: build
+  # Windows runner uses the Shell executor - no image: key.
+  # Scripts run natively in PowerShell on the Windows host.
+  # Python 3.11 must be installed on the host (or Chocolatey will install it).
+  # inherit: default: false prevents the Linux default image from leaking in.
+  inherit:
+    default: false
+  tags:
+    - windows
+  before_script:
+    - |
+      Write-Host "==> Moving into the correct GitLab build repository directory..."
+      cd "$env:CI_PROJECT_DIR"
+
+      Write-Host "==> Verifying Python and Pip via explicit global paths..."
+      & "C:\Program Files\Python311\python.exe" --version
+      & "C:\Program Files\Python311\Scripts\pip.exe" --version
+      
+      Write-Host "==> Forcing Python to trust local system and university SSL certificates..."
+      & "C:\Program Files\Python311\Scripts\pip.exe" install pip-system-certs certifi --trusted-host pypi.org --trusted-host files.pythonhosted.org
+
+      Write-Host "==> Installing Python dependencies and PyInstaller..."
+      & "C:\Program Files\Python311\Scripts\pip.exe" install -e . pyinstaller --trusted-host pypi.org --trusted-host files.pythonhosted.org --trusted-host mupdf.com
+  script:
+    - |
+      cd "$env:CI_PROJECT_DIR"
+      Write-Host "==> Building Windows backend binary with PyInstaller..."
+      & "C:\Program Files\Python311\python.exe" build_backend.py
+
+      Write-Host "==> Verifying output..."
+      if (!(Test-Path "dist/pdf-textract-backend/pdf-textract-backend.exe")) { 
+          Write-Error "Binary not found!"
+          exit 1 
+      }
+      
+      Write-Host "==> Build successful. Compressing package..."
+      $PACKAGE_VERSION = if ($env:CI_COMMIT_TAG) { $env:CI_COMMIT_TAG } else { "dev-$env:CI_COMMIT_SHORT_SHA" }
+      Write-Host "==> Uploading Windows binary to Package Registry as version: $PACKAGE_VERSION"
+      
+      tar -caf pdf-textract-backend-windows-${PACKAGE_VERSION}.zip -C dist pdf-textract-backend
+      
+      curl.exe --fail --silent --show-error `
+               --header "JOB-TOKEN: $env:CI_JOB_TOKEN" `
+               --upload-file pdf-textract-backend-windows-${PACKAGE_VERSION}.zip `
+               "$env:CI_API_V4_URL/projects/$env:CI_PROJECT_ID/packages/generic/pdf-textract-backend/$PACKAGE_VERSION/pdf-textract-backend-windows-${PACKAGE_VERSION}.zip"
+      Write-Host "==> Upload complete."
+  rules:
+    - if: $CI_COMMIT_BRANCH == "main"
+    - if: $CI_COMMIT_TAG =~ /^v\d+\.\d+\.\d+/
+  artifacts:
+    name: "pdf-textract-backend-windows-$CI_COMMIT_REF_SLUG"
+    expire_in: 7 days
+    paths:
+      - dist/pdf-textract-backend/
+    when: on_success

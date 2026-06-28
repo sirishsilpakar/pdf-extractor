@@ -1,5 +1,6 @@
 import multiprocessing
 import os
+import sys
 from pathlib import Path
 
 # Controls the number of parallel processes.
@@ -81,6 +82,23 @@ OCR_LOW_TEXT_LENGTH_THRESHOLD = 10
 
 _CURRENT_PATH = os.path.dirname(os.path.abspath(__file__))
 
+# Determine the base directory for data and logs
+_BASE_DIR = os.getenv("BASE_DIR")
+if _BASE_DIR:
+    BASE_DIR = os.path.abspath(_BASE_DIR)
+elif getattr(sys, "frozen", False):
+    # If running as a frozen PyInstaller executable (production),
+    # default to a persistent directory in the user's home folder
+    # so we don't lose data when the PyInstaller temp directory is cleared
+    BASE_DIR = os.path.join(str(Path.home()), ".pdf-extractor")
+else:
+    # If running as a standard python script (development),
+    # keep data locally in the repository
+    BASE_DIR = _CURRENT_PATH
+
+# Ensure BASE_DIR exists
+os.makedirs(BASE_DIR, exist_ok=True)
+
 REMOVE_HEADERS = os.getenv("REMOVE_HEADERS", "false").lower() in ("1", "true", "yes")
 REMOVE_FOOTERS = os.getenv("REMOVE_FOOTERS", "false").lower() in ("1", "true", "yes")
 REMOVE_PAGE_NUMBERS = os.getenv("REMOVE_PAGE_NUMBERS", "false").lower() in (
@@ -106,12 +124,12 @@ DEBUG_POST_PROCESS_FILE = os.getenv("DEBUG_POST_PROCESS_FILE", "false").lower() 
 
 # SQLite database path — override with EXTRACTOR_DB_PATH env var
 DB_PATH = os.path.abspath(
-    os.getenv("EXTRACTOR_DB_PATH", os.path.join(_CURRENT_PATH, "state.db"))
+    os.getenv("EXTRACTOR_DB_PATH", os.path.join(BASE_DIR, "state.db"))
 )
 
 # Directory where per-run log files are stored
 LOG_DIR = os.path.abspath(
-    os.getenv("EXTRACTOR_LOG_DIR", os.path.join(_CURRENT_PATH, "logs"))
+    os.getenv("EXTRACTOR_LOG_DIR", os.path.join(BASE_DIR, "logs"))
 )
 
 # Maximum number of pipeline_*.log files to keep (oldest are deleted)
@@ -130,13 +148,15 @@ MAX_PAGE_SIZE: int = int(os.getenv("MAX_PAGE_SIZE", "200"))
 HASH_SAMPLE_BYTES: int = 64 * 1024
 
 # Default Directories
-UPLOAD_DIR: Path = Path(os.getenv("UPLOAD_DIR", os.path.join(_CURRENT_PATH, "uploads")))
-OUTPUT_DIR: str = os.getenv(
-    "OUTPUT_DIR", os.path.join(_CURRENT_PATH, "extracted_files")
+UPLOAD_DIR: Path = Path(os.getenv("UPLOAD_DIR", os.path.join(BASE_DIR, "uploads")))
+OUTPUT_DIR: str = os.getenv("OUTPUT_DIR", os.path.join(BASE_DIR, "extracted_files"))
+BENCHMARK_DIR: str = os.path.abspath(
+    os.getenv("EXTRACTOR_BENCHMARK_DIR", os.path.join(BASE_DIR, "benchmark_output"))
 )
 
 UPLOAD_DIR.mkdir(exist_ok=True)
 os.makedirs(OUTPUT_DIR, exist_ok=True)
+os.makedirs(BENCHMARK_DIR, exist_ok=True)
 
 # Estimated peak RAM consumption per worker process (in MB).
 # Includes the in-memory OCR image buffer (200 DPI page render of a 50 MB PDF ~ 200–400 MB) plus Python interpreter overhead

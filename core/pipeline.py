@@ -489,7 +489,9 @@ def _write_summary(rows: list[dict]) -> None:
     Filenames include the run datetime so each run's summary is preserved
     rather than overwritten
     """
-    summary_dir = "benchmark_output"
+    from config import BENCHMARK_DIR
+
+    summary_dir = BENCHMARK_DIR
     os.makedirs(summary_dir, exist_ok=True)
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
 
