@@ -513,3 +513,104 @@ def test_has_duplicate_flag(tmp_db):
     uniq_id = item_map["unique.pdf"]["id"]
     uniq_record = tmp_db.get_by_id(uniq_id)
     assert uniq_record["has_duplicate"] == 0
+
+
+def test_get_batch_files_sorting(tmp_db):
+    batch_id = "test-batch-sorting"
+    tmp_db.create_batch(batch_id, "/dummy/path", "local_ref", True)
+
+    files = [
+        {
+            "name": "c_file.pdf",
+            "rel_path": "c_file.pdf",
+            "size_bytes": 100,
+            "content_hash": "hash_c",
+            "is_processed": False,
+        },
+        {
+            "name": "a_file.pdf",
+            "rel_path": "a_file.pdf",
+            "size_bytes": 200,
+            "content_hash": "hash_a",
+            "is_processed": True,
+        },
+        {
+            "name": "b_file.pdf",
+            "rel_path": "b_file.pdf",
+            "size_bytes": 300,
+            "content_hash": "hash_b",
+            "is_processed": False,
+        },
+    ]
+
+    # Mark hash_a as processed
+    tmp_db.save_extracted_text(
+        source_path="/dummy/path/a_file.pdf",
+        filename="a_file.pdf",
+        rel_path="a_file.pdf",
+        txt_path="/dummy/path/a_file.txt",
+        method="direct",
+        char_count=10,
+        page_count=1,
+        content_hash="hash_a",
+    )
+
+    tmp_db.insert_batch_files(batch_id, files)
+
+    # Sort by name ASC
+    total, items_name_asc = tmp_db.get_batch_files(
+        batch_id, page=1, size=10, sort_by="name", sort_order="asc"
+    )
+    assert [item["name"] for item in items_name_asc] == [
+        "a_file.pdf",
+        "b_file.pdf",
+        "c_file.pdf",
+    ]
+
+    # Sort by name DESC
+    total, items_name_desc = tmp_db.get_batch_files(
+        batch_id, page=1, size=10, sort_by="name", sort_order="desc"
+    )
+    assert [item["name"] for item in items_name_desc] == [
+        "c_file.pdf",
+        "b_file.pdf",
+        "a_file.pdf",
+    ]
+
+    # Sort by status ASC
+    total, items_status_asc = tmp_db.get_batch_files(
+        batch_id, page=1, size=10, sort_by="status", sort_order="asc"
+    )
+    assert items_status_asc[-1]["name"] == "a_file.pdf"
+
+    # Sort by status DESC
+    total, items_status_desc = tmp_db.get_batch_files(
+        batch_id, page=1, size=10, sort_by="status", sort_order="desc"
+    )
+    assert items_status_desc[0]["name"] == "a_file.pdf"
+
+    # Sort by size DESC
+    total, items_size_desc = tmp_db.get_batch_files(
+        batch_id, page=1, size=10, sort_by="size", sort_order="desc"
+    )
+    assert [item["name"] for item in items_size_desc] == [
+        "b_file.pdf",
+        "a_file.pdf",
+        "c_file.pdf",
+    ]
+
+    # Sort by method ASC
+    total, items_method_asc = tmp_db.get_batch_files(
+        batch_id, page=1, size=10, sort_by="method", sort_order="asc"
+    )
+    assert items_method_asc[0]["name"] == "a_file.pdf"
+
+    # Combined sort: status ASC, name DESC
+    total, items_comb = tmp_db.get_batch_files(
+        batch_id, page=1, size=10, sort_by="status,name", sort_order="asc,desc"
+    )
+    assert [item["name"] for item in items_comb] == [
+        "c_file.pdf",
+        "b_file.pdf",
+        "a_file.pdf",
+    ]

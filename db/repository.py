@@ -9,7 +9,7 @@ maps to a list of idempotent SQL statements in '_MIGRATIONS'.  On startup
 Legacy DBs (created before versioning was introduced, 'user_version = 0')
 are detected via '_detect_legacy_version' so existing data is never lost.
 
-Current schema version: 18
+Current schema version: 20
 
 Migration history
 -----------------
@@ -28,6 +28,9 @@ Migration history
 16 'idx_et_filename' and 'idx_et_hash' dropped and recreated on 'extracted_texts'
 17 'run_number' column on 'runs' + update existing runs with run_number
 18 'output_dir' column on 'runs'
+19 'error_message' column on 'extracted_texts'
+20 'idx_et_rel_path' index on 'extracted_texts'
+21 'idx_et_path_time' and 'idx_et_hash_time' index on 'extracted_texts'
 """
 
 from __future__ import annotations
@@ -41,7 +44,7 @@ from typing import Any, Optional
 logger = logging.getLogger(__name__)
 
 
-_SCHEMA_VERSION = 18
+_SCHEMA_VERSION = 21
 
 # Each value is a list of SQL statements for that migration step
 # Statements are executed individually so we can catch "already exists" errors
@@ -190,6 +193,18 @@ _MIGRATIONS: dict[int, list[str]] = {
     ],
     18: [
         "ALTER TABLE runs ADD COLUMN output_dir TEXT",
+    ],
+    19: [
+        "ALTER TABLE extracted_texts ADD COLUMN error_message TEXT DEFAULT NULL",
+    ],
+    20: [
+        "CREATE INDEX IF NOT EXISTS idx_et_rel_path ON extracted_texts(rel_path)",
+    ],
+    21: [
+        "DROP INDEX IF EXISTS idx_et_hash",
+        "DROP INDEX IF EXISTS idx_et_rel_path",
+        "CREATE INDEX IF NOT EXISTS idx_et_hash_time ON extracted_texts(content_hash, processed_at DESC, id DESC)",
+        "CREATE INDEX IF NOT EXISTS idx_et_path_time ON extracted_texts(rel_path, processed_at DESC, id DESC)",
     ],
 }
 
@@ -664,7 +679,7 @@ class DatabaseRepository:
                                 GROUP BY rel_path
                             )
                             SELECT e.id, e.filename, e.rel_path, e.method, e.char_count,
-                                   e.page_count, e.content_hash, e.processed_at, e.confidence, e.flags, e.run_id,
+                                   e.page_count, e.content_hash, e.processed_at, e.confidence, e.flags, e.error_message, e.run_id,
                                    rn.run_number,
                                    CASE WHEN fr.run_count > 1 THEN 1 ELSE 0 END AS has_duplicate
                             FROM extracted_texts e
@@ -686,7 +701,7 @@ class DatabaseRepository:
                             GROUP BY rel_path
                         )
                         SELECT e.id, e.filename, e.rel_path, e.method, e.char_count,
-                               e.page_count, e.content_hash, e.processed_at, e.confidence, e.flags, e.run_id,
+                               e.page_count, e.content_hash, e.processed_at, e.confidence, e.flags, e.error_message, e.run_id,
                                rn.run_number,
                                CASE WHEN fr.run_count > 1 THEN 1 ELSE 0 END AS has_duplicate
                         FROM extracted_texts e
@@ -828,6 +843,7 @@ class DatabaseRepository:
         confidence: float | None = None,
         flags: list[str] | None = None,
         txt_hash: str | None = None,
+        error_message: str | None = None,
     ) -> int:
         """Upsert an extraction record. Returns the record ID (new or existing)"""
         now = self._now()
@@ -838,8 +854,8 @@ class DatabaseRepository:
                     """
                     INSERT INTO extracted_texts
                         (run_id, source_path, filename, rel_path, txt_path, method,
-                         char_count, page_count, content_hash, processed_at, confidence, flags, txt_hash)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                         char_count, page_count, content_hash, processed_at, confidence, flags, txt_hash, error_message)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         run_id,
@@ -855,6 +871,7 @@ class DatabaseRepository:
                         confidence,
                         ",".join(flags) if flags else None,
                         txt_hash or None,
+                        error_message,
                     ),
                 )
                 conn.commit()
@@ -907,7 +924,7 @@ class DatabaseRepository:
                     )
                     SELECT e.id, e.run_id, r.run_number, e.source_path, e.filename, e.rel_path,
                            e.txt_path, e.method, e.char_count, e.page_count,
-                           e.content_hash, e.processed_at, e.confidence, e.flags,
+                           e.content_hash, e.processed_at, e.confidence, e.flags, e.error_message,
                            r.started_at AS run_started_at,
                            CASE WHEN fr.run_count > 1 THEN 1 ELSE 0 END AS has_duplicate
                     FROM extracted_texts e
@@ -1395,6 +1412,8 @@ class DatabaseRepository:
         page: int,
         size: int,
         filters: dict | None = None,
+        sort_by: str | None = None,
+        sort_order: str = "asc",
     ) -> tuple[int, list[dict]]:
         """Return (total_count, page_rows) for a batch's file list.
 
@@ -1404,8 +1423,40 @@ class DatabaseRepository:
                   'is_processed' (bool) - True: only processed files,
                                             False: only unprocessed files.
                 Extensible for future keys (e.g. name prefix, size range).
+            sort_by: Optional columns to sort by, comma-separated (e.g. 'status,name').
+            sort_order: Directions for sort columns, comma-separated (e.g. 'asc,desc').
         """
         offset = (page - 1) * size
+
+        # Build ORDER BY clause for multi-column sorting
+        order_clauses = []
+        keys = [k.strip() for k in sort_by.split(",")] if sort_by else []
+        orders = (
+            [o.strip().lower() for o in sort_order.split(",")] if sort_order else []
+        )
+
+        for i, key in enumerate(keys):
+            direction = "ASC"
+            if i < len(orders) and orders[i] == "desc":
+                direction = "DESC"
+
+            col = None
+            if key == "name":
+                col = "name"
+            elif key in ("status", "progress"):
+                col = "is_processed"
+            elif key == "size":
+                col = "size_bytes"
+            elif key == "method":
+                col = "method"
+
+            if col:
+                order_clauses.append(f"sub.{col} {direction}")
+
+        if not order_clauses:
+            order_clauses.append("sub.rel_path ASC")
+
+        order_by_sql = "ORDER BY " + ", ".join(order_clauses)
 
         # Build extra WHERE clauses applied on top of the subquery
         having_clauses: list[str] = []
@@ -1418,10 +1469,19 @@ class DatabaseRepository:
 
         base_query = """
             SELECT bf.batch_id, bf.name, bf.rel_path, bf.size_bytes, bf.content_hash,
-                   CASE WHEN et.content_hash IS NOT NULL THEN 1 ELSE 0 END AS is_processed
+                   CASE WHEN et.id IS NOT NULL THEN 1 ELSE 0 END AS is_processed,
+                   COALESCE(et.method, 'undefined') AS method,
+                   COALESCE(et.flags, '') AS flags,
+                   COALESCE(et.error_message, '') AS error_message
               FROM batch_files bf
-              LEFT JOIN (SELECT DISTINCT content_hash FROM extracted_texts) et
-                ON bf.content_hash = et.content_hash
+              LEFT JOIN extracted_texts et ON et.id = (
+                  SELECT id
+                    FROM extracted_texts
+                   WHERE (bf.content_hash IS NOT NULL AND content_hash = bf.content_hash)
+                      OR ((content_hash IS NULL OR content_hash = '') AND rel_path = bf.rel_path)
+                   ORDER BY processed_at DESC
+                   LIMIT 1
+              )
              WHERE bf.batch_id = ?
         """
 
@@ -1436,7 +1496,7 @@ class DatabaseRepository:
                     f"""
                     SELECT * FROM ({base_query}) sub
                     {having_sql}
-                    ORDER BY rel_path
+                    {order_by_sql}
                     LIMIT ? OFFSET ?
                     """,
                     (batch_id, size, offset),

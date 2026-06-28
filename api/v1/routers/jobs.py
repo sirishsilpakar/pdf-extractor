@@ -380,9 +380,15 @@ async def list_job_files(
             "so that the UI reflects the actual set queued for processing."
         ),
     ),
+    sort_by: str | None = Query(
+        None, description="Field to sort by: status, name, progress"
+    ),
+    sort_order: str = Query("asc", description="Sort order: asc, desc"),
 ) -> PagedResponse[FileEntryResponse]:
     jm: JobManager
-    total, items = jm.get_files_page(page, size, skip_processed)
+    total, items = jm.get_files_page(
+        page, size, skip_processed, sort_by=sort_by, sort_order=sort_order
+    )
     status = jm.get_status()
     return PagedResponse.build(
         total=total,

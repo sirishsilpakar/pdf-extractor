@@ -101,12 +101,26 @@ async def get_result(
         raise HTTPException(404, detail="Result not found.")
 
     txt_path = row.get("txt_path", "")
-    try:
-        content = Path(txt_path).read_text(encoding="utf-8", errors="replace")
-    except FileNotFoundError:
-        raise HTTPException(404, detail=f"Text file not found on disk: {txt_path}")
-    except Exception as exc:
-        raise HTTPException(500, detail=f"Could not read file: {exc}")
+    content = ""
+    if txt_path:
+        try:
+            content = Path(txt_path).read_text(encoding="utf-8", errors="replace")
+        except FileNotFoundError:
+            if row.get("method") != "error":
+                raise HTTPException(
+                    404, detail=f"Text file not found on disk: {txt_path}"
+                )
+            content = f"Extraction failed: {row.get('error_message')}"
+        except Exception as exc:
+            if row.get("method") != "error":
+                raise HTTPException(500, detail=f"Could not read file: {exc}")
+            content = f"Extraction failed: {row.get('error_message')}"
+    else:
+        err = row.get("error_message") or "Extraction failed (no details available)."
+        flags = row.get("flags")
+        if flags:
+            err += f" (Flags: {flags})"
+        content = err
 
     return ResultDetail(**row, content=content)
 

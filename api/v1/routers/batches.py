@@ -57,6 +57,9 @@ class BatchFileItem(BaseModel):
     size_bytes: int
     content_hash: str | None = None
     is_processed: bool
+    method: str | None = None
+    flags: str | None = None
+    error_message: str | None = None
 
 
 # Routes
@@ -167,6 +170,10 @@ async def list_batch_files(
             "so that the UI reflects the actual set queued for processing."
         ),
     ),
+    sort_by: str | None = Query(  # noqa: B008
+        None, description="Field to sort by: status, name, progress"
+    ),
+    sort_order: str = Query("asc", description="Sort order: asc, desc"),  # noqa: B008
 ) -> PagedResponse:
     batch = db.get_batch(batch_id)
     if batch is None:
@@ -174,7 +181,9 @@ async def list_batch_files(
 
     # Translate the API level boolean into the repository's generalised filter dict
     filters = {"is_processed": False} if skip_processed else None
-    total, rows = db.get_batch_files(batch_id, page, size, filters=filters)
+    total, rows = db.get_batch_files(
+        batch_id, page, size, filters=filters, sort_by=sort_by, sort_order=sort_order
+    )
 
     items = [
         BatchFileItem(
@@ -184,6 +193,9 @@ async def list_batch_files(
             size_bytes=r["size_bytes"],
             content_hash=r["content_hash"],
             is_processed=bool(r["is_processed"]),
+            method=r["method"],
+            flags=r["flags"],
+            error_message=r["error_message"],
         )
         for r in rows
     ]

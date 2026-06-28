@@ -132,11 +132,41 @@ class _JobState:
         return list(self._files_by_name.values())
 
     def entries_page(
-        self, page: int, size: int, skip_processed: bool = False
+        self,
+        page: int,
+        size: int,
+        skip_processed: bool = False,
+        sort_by: str | None = None,
+        sort_order: str = "asc",
     ) -> tuple[int, list[FileEntry]]:
         all_e = self.all_entries()
         if skip_processed:
             all_e = [e for e in all_e if not e.is_processed]
+
+        if sort_by:
+            keys = [k.strip() for k in sort_by.split(",")]
+            orders = (
+                [o.strip().lower() for o in sort_order.split(",")] if sort_order else []
+            )
+
+            # Python sorts are stable. We sort by keys in reverse order of precedence
+            for i in reversed(range(len(keys))):
+                key = keys[i]
+                reverse = False
+                if i < len(orders) and orders[i] == "desc":
+                    reverse = True
+
+                if key == "name":
+                    all_e.sort(key=lambda e: e.name.lower(), reverse=reverse)
+                elif key == "status":
+                    all_e.sort(key=lambda e: e.status.value, reverse=reverse)
+                elif key == "progress":
+                    all_e.sort(key=lambda e: e.progress_pct, reverse=reverse)
+                elif key == "size":
+                    all_e.sort(key=lambda e: e.size_bytes, reverse=reverse)
+                elif key == "method":
+                    all_e.sort(key=lambda e: e.method.value, reverse=reverse)
+
         total = len(all_e)
         offset = (max(page, 1) - 1) * size
         return total, all_e[offset : offset + size]
@@ -266,11 +296,18 @@ class JobManager:
             }
 
     def get_files_page(
-        self, page: int = 1, size: int = 50, skip_processed: bool = False
+        self,
+        page: int = 1,
+        size: int = 50,
+        skip_processed: bool = False,
+        sort_by: str | None = None,
+        sort_order: str = "asc",
     ) -> tuple[int, list[dict]]:
         """Returns the file pages as (total, [file_entry_dict, ...])"""
         with self._lock:
-            total, entries = self._state.entries_page(page, size, skip_processed)
+            total, entries = self._state.entries_page(
+                page, size, skip_processed, sort_by=sort_by, sort_order=sort_order
+            )
         return total, [e.to_dict() for e in entries]
 
     def handle_event(self, event: dict) -> None:
@@ -459,6 +496,23 @@ class JobManager:
         """Append to log buffer then broadcast state mutation and side effect separated"""
         with self._lock:
             self._state.log.append(msg, level)
+            run_id = self._state.run_id
+            if run_id:
+                try:
+                    import os as _os
+
+                    from config import LOG_RUNS_DIR
+
+                    _os.makedirs(LOG_RUNS_DIR, exist_ok=True)
+                    log_path = _os.path.join(LOG_RUNS_DIR, f"{run_id}.txt")
+                    with open(log_path, "a", encoding="utf-8") as fh:
+                        fh.write(f"[{level.upper()}] {msg}\n")
+                except Exception as exc:
+                    import logging as _logging
+
+                    _logging.warning(
+                        "Could not append log to file for %s: %s", run_id, exc
+                    )
         self._emit({"type": "log", "message": msg, "level": level})
 
     def _emit(self, event: dict) -> None:
@@ -525,15 +579,19 @@ class JobManager:
             _os.makedirs(LOG_RUNS_DIR, exist_ok=True)
             log_path = _os.path.join(LOG_RUNS_DIR, f"{run_id}.txt")
 
-            with self._lock:
-                lines = self._state.log.snapshot()
+            # Write buffer only if the file does not already exist
+            # to prevent truncating/overwriting logs written dynamically.
+            if not _os.path.exists(log_path):
+                with self._lock:
+                    lines = self._state.log.snapshot()
 
-            with open(log_path, "w", encoding="utf-8") as fh:
-                fh.write(
-                    "\n".join(
-                        f"[{line['level'].upper()}] {line['message']}" for line in lines
+                with open(log_path, "w", encoding="utf-8") as fh:
+                    fh.write(
+                        "\n".join(
+                            f"[{line['level'].upper()}] {line['message']}"
+                            for line in lines
+                        )
                     )
-                )
 
             if db is not None and hasattr(db, "save_run_log_path"):
                 db.save_run_log_path(run_id, log_path)

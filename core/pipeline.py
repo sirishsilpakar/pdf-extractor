@@ -245,6 +245,12 @@ def run_pipeline(
         output_dir=run_output_dir,
     )
 
+    if db is not None and hasattr(db, "save_run_log_path"):
+        from config import LOG_RUNS_DIR
+
+        log_path = os.path.join(LOG_RUNS_DIR, f"{run_id}.txt")
+        db.save_run_log_path(run_id, log_path)
+
     # Pre mark all files as started in one transaction
     db.mark_started_batch(files_to_process)
 
@@ -365,6 +371,22 @@ def run_pipeline(
                     failures += 1
                     if result.outcome == PipelineOutcome.TIMEOUT:
                         timeouts += 1
+
+                    db.save_extracted_text(
+                        source_path=result.file_path,
+                        filename=basename,
+                        rel_path=result.rel_path or basename,
+                        txt_path="",
+                        method=result.method.value,
+                        char_count=0,
+                        page_count=0,
+                        content_hash=result.content_hash,
+                        run_id=run_id,
+                        confidence=0.0,
+                        flags=result.flags,
+                        txt_hash="",
+                        error_message=result.message,
+                    )
 
                 # Build and emit file completion event
                 event_cls = {
