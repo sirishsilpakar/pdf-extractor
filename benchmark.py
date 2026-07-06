@@ -534,11 +534,14 @@ if __name__ == "__main__":
         description="Benchmark multiple PDF extractors/OCR engines"
     )
     parser.add_argument("pdf_root", help="Directory tree with PDFs")
+
+    from config import BENCHMARK_DIR
+
     parser.add_argument(
         "out_dir",
         nargs="?",
-        default="benchmark_output",
-        help="Output directory (default: benchmark_output)",
+        default=BENCHMARK_DIR,
+        help=f"Output directory (default: {BENCHMARK_DIR})",
     )
     parser.add_argument(
         "--extractors",

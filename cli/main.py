@@ -75,7 +75,65 @@ def cli():
     is_flag=True,
     help="Suppress page level progress lines (file start/done still shown)",
 )
-def run_cmd(input_dir, output_dir, workers, force, no_ocr, fast, dpi, db_path, quiet):
+@click.option(
+    "--remove-headers/--no-remove-headers",
+    default=False,
+    show_default=True,
+    envvar="REMOVE_HEADERS",
+    help="Strip repeating page headers from top margin of pages",
+)
+@click.option(
+    "--remove-footers/--no-remove-footers",
+    default=False,
+    show_default=True,
+    envvar="REMOVE_FOOTERS",
+    help="Strip repeating page footers from bottom margin of pages",
+)
+@click.option(
+    "--remove-page-numbers/--no-remove-page-numbers",
+    default=False,
+    show_default=True,
+    envvar="REMOVE_PAGE_NUMBERS",
+    help="Remove page number strings (e.g., 'Page 1', Roman numerals) from text",
+)
+@click.option(
+    "--remove-numeric-values/--no-remove-numeric-values",
+    default=False,
+    show_default=True,
+    envvar="REMOVE_NUMERIC_VALUES",
+    help="Remove all numeric digits and decimal patterns from text",
+)
+@click.option(
+    "--apply-text-formatting/--no-apply-text-formatting",
+    default=True,
+    show_default=True,
+    envvar="APPLY_TEXT_FORMATTING",
+    help="Apply text normalization (e.g. hyphenation removal, space collapse)",
+)
+@click.option(
+    "--debug-visualize/--no-debug-visualize",
+    default=False,
+    show_default=True,
+    envvar="DEBUG_POST_PROCESS_FILE",
+    help="Generate an HTML visual layout debugger outlining bounding boxes (red=removed, green=kept)",
+)
+def run_cmd(
+    input_dir,
+    output_dir,
+    workers,
+    force,
+    no_ocr,
+    fast,
+    dpi,
+    db_path,
+    quiet,
+    remove_headers,
+    remove_footers,
+    remove_page_numbers,
+    remove_numeric_values,
+    apply_text_formatting,
+    debug_visualize,
+):
     """Run the extraction pipeline on INPUT_DIR"""
     import multiprocessing
 
@@ -123,14 +181,15 @@ def run_cmd(input_dir, output_dir, workers, force, no_ocr, fast, dpi, db_path, q
 
         if etype == "log":
             msg = event.get("message", "")
+            level = event.get("level", "info")
             if not msg:
                 return
-            # Colour-code by severity prefix
-            if "[ERROR]" in msg or "FAILURE" in msg:
+
+            if level == "error":
                 click.secho(msg, fg="red", err=True)
-            elif "[WARN]" in msg or "WARNING" in msg:
+            elif level == "warning":
                 click.secho(msg, fg="yellow")
-            elif "[OK]" in msg or "FINISHED" in msg:
+            elif level == "success" or level == "ok":
                 click.secho(msg, fg="bright_green")
             else:
                 click.echo(msg)
@@ -227,6 +286,15 @@ def run_cmd(input_dir, output_dir, workers, force, no_ocr, fast, dpi, db_path, q
             )
             click.secho("─" * 56, fg="bright_black")
 
+    settings = {
+        "remove_header": remove_headers,
+        "remove_footer": remove_footers,
+        "remove_page_numbers": remove_page_numbers,
+        "remove_numeric_values": remove_numeric_values,
+        "apply_text_formatting": apply_text_formatting,
+        "debug_visualize": debug_visualize,
+    }
+
     try:
         run_pipeline(
             input_dir=input_dir,
@@ -235,6 +303,7 @@ def run_cmd(input_dir, output_dir, workers, force, no_ocr, fast, dpi, db_path, q
             progress_callback=_progress,
             ocr_engine=ocr_engine,
             db=db,
+            settings=settings,
         )
     except KeyboardInterrupt:
         click.secho("\nInterrupted.", fg="yellow")

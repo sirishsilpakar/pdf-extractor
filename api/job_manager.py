@@ -35,6 +35,7 @@ class FileEntry:
     current_page: int = 0
     total_pages: int = 0
     upload_rel: str = ""
+    is_processed: bool = False
 
     def to_dict(self) -> dict:
         return {
@@ -49,6 +50,7 @@ class FileEntry:
             "message": self.message,
             "current_page": self.current_page,
             "total_pages": self.total_pages,
+            "is_processed": self.is_processed,
         }
 
 
@@ -56,12 +58,12 @@ class LogBuffer:
     """Fixed capacity FIFO log line store."""
 
     def __init__(self, maxlen: int = 500) -> None:
-        self._lines: Deque[str] = deque(maxlen=maxlen)
+        self._lines: Deque[dict] = deque(maxlen=maxlen)
 
-    def append(self, msg: str) -> None:
-        self._lines.append(msg)
+    def append(self, msg: str, level: str = "info") -> None:
+        self._lines.append({"message": msg, "level": level})
 
-    def snapshot(self) -> list[str]:
+    def snapshot(self) -> list[dict]:
         return list(self._lines)
 
     def clear(self) -> None:
@@ -87,8 +89,16 @@ class _JobState:
     ocr_count: int = 0
     current_file: str = ""
     run_id: str = ""
+    batch_ids: list[str] = field(default_factory=list)
+    error_message: Optional[str] = None
 
-    def reset(self, entries: list[FileEntry], run_id: str = "") -> None:
+    def reset(
+        self,
+        entries: list[FileEntry],
+        run_id: str = "",
+        batch_ids: Optional[list[str]] = None,
+        skip_count: int = 0,
+    ) -> None:
         self.status = JobStatus.RUNNING
         self._files_by_name = {e.name: e for e in entries}
         self._files_by_path = {e.path: e for e in entries}
@@ -96,12 +106,16 @@ class _JobState:
         self.start_time = time.time()
         self.end_time = None
         self.done_count = 0
-        self.total_count = len(entries)
+        # Subtract files that will be skipped by the pipeline
+        # so that progress reporting reflects only the files actually queued for work
+        self.total_count = max(0, len(entries) - skip_count)
         self.failed_count = 0
         self.direct_count = 0
         self.ocr_count = 0
         self.current_file = ""
         self.run_id = run_id
+        self.batch_ids = batch_ids or []
+        self.error_message = None
 
     def find_by_name(self, name: str) -> Optional[FileEntry]:
         return self._files_by_name.get(name)
@@ -117,8 +131,42 @@ class _JobState:
     def all_entries(self) -> list[FileEntry]:
         return list(self._files_by_name.values())
 
-    def entries_page(self, page: int, size: int) -> tuple[int, list[FileEntry]]:
+    def entries_page(
+        self,
+        page: int,
+        size: int,
+        skip_processed: bool = False,
+        sort_by: str | None = None,
+        sort_order: str = "asc",
+    ) -> tuple[int, list[FileEntry]]:
         all_e = self.all_entries()
+        if skip_processed:
+            all_e = [e for e in all_e if not e.is_processed]
+
+        if sort_by:
+            keys = [k.strip() for k in sort_by.split(",")]
+            orders = (
+                [o.strip().lower() for o in sort_order.split(",")] if sort_order else []
+            )
+
+            # Python sorts are stable. We sort by keys in reverse order of precedence
+            for i in reversed(range(len(keys))):
+                key = keys[i]
+                reverse = False
+                if i < len(orders) and orders[i] == "desc":
+                    reverse = True
+
+                if key == "name":
+                    all_e.sort(key=lambda e: e.name.lower(), reverse=reverse)
+                elif key == "status":
+                    all_e.sort(key=lambda e: e.status.value, reverse=reverse)
+                elif key == "progress":
+                    all_e.sort(key=lambda e: e.progress_pct, reverse=reverse)
+                elif key == "size":
+                    all_e.sort(key=lambda e: e.size_bytes, reverse=reverse)
+                elif key == "method":
+                    all_e.sort(key=lambda e: e.method.value, reverse=reverse)
+
         total = len(all_e)
         offset = (max(page, 1) - 1) * size
         return total, all_e[offset : offset + size]
@@ -161,10 +209,13 @@ class JobManager:
         settings: Optional[dict] = None,
         ocr_engine=None,
         db=None,
-    ) -> bool:
+        timeout_seconds: int = 0,
+        batch_ids: Optional[list[str]] = None,
+        skip_count: int = 0,
+    ) -> Optional[str]:
         """Start the pipeline in a background thread.
 
-        Returns 'False' if a job is already running
+        Returns run_id if started, or None if a job is already running
         """
         import uuid as _uuid
 
@@ -172,29 +223,45 @@ class JobManager:
 
         with self._lock:
             if self._state.status == JobStatus.RUNNING:
-                return False
+                return None
             self._cancel.clear()
-            self._state.reset(file_entries, run_id=run_id)
+            self._state.reset(
+                file_entries,
+                run_id=run_id,
+                batch_ids=batch_ids,
+                skip_count=skip_count,
+            )
 
         if settings:
-            self._append_log(f"[INFO] Settings received: {settings}")
+            self._append_log(f"Settings received: {settings}", level="info")
 
         self._emit({"type": "state_update", **self.get_status()})
 
         thread = threading.Thread(
             target=self._run,
-            args=(input_dir, output_dir, force, ocr_engine, db, run_id),
+            args=(
+                input_dir,
+                output_dir,
+                force,
+                ocr_engine,
+                db,
+                run_id,
+                timeout_seconds,
+                settings,
+            ),
             daemon=True,
         )
         thread.start()
-        return True
+        return run_id
 
     def cancel_job(self) -> None:
         self._cancel.set()
         with self._lock:
             if self._state.status == JobStatus.RUNNING:
                 self._state.status = JobStatus.CANCELLED
+                self._state.end_time = time.time()
         self._emit({"type": "state_update", **self.get_status()})
+        self._append_log("Pipeline cancellation requested by user.", level="info")
 
     def get_status(self) -> dict:
         """Return compact metadata dict (does not include the files list)"""
@@ -222,18 +289,38 @@ class JobManager:
                 "elapsed": elapsed,
                 "eta_seconds": eta,
                 "current_file": self._state.current_file,
+                "batch_ids": self._state.batch_ids,
+                "error_message": self._state.error_message,
                 "log": self._state.log.snapshot(),
+                "run_id": self._state.run_id,
             }
 
-    def get_files_page(self, page: int = 1, size: int = 50) -> tuple[int, list[dict]]:
+    def get_files_page(
+        self,
+        page: int = 1,
+        size: int = 50,
+        skip_processed: bool = False,
+        sort_by: str | None = None,
+        sort_order: str = "asc",
+    ) -> tuple[int, list[dict]]:
         """Returns the file pages as (total, [file_entry_dict, ...])"""
         with self._lock:
-            total, entries = self._state.entries_page(page, size)
+            total, entries = self._state.entries_page(
+                page, size, skip_processed, sort_by=sort_by, sort_order=sort_order
+            )
         return total, [e.to_dict() for e in entries]
 
     def handle_event(self, event: dict) -> None:
         """Route an event dict to the appropriate handler (progress callback)"""
+        with self._lock:
+            is_cancelled = self._state.status == JobStatus.CANCELLED
+
         etype = event.get("type", "")
+
+        # Immediately stop processing worker events if the job was cancelled
+        if is_cancelled:
+            return
+
         handler = self._handlers.get(etype)
         if handler:
             handler(event)
@@ -243,7 +330,7 @@ class JobManager:
     # ------------------------------------------------------------------
 
     def _on_log(self, event: dict) -> None:
-        self._append_log(event.get("message", ""))
+        self._append_log(event.get("message", ""), level=event.get("level", "info"))
 
     def _on_file_started(self, event: dict) -> None:
         file_path = event.get("file_path", "")
@@ -258,7 +345,20 @@ class JobManager:
                 entry.current_page = 0
             self._state.current_file = basename
 
-        self._append_log(f"[INFO] Worker {pid} → {basename}")
+        self._append_log(f"Worker {pid} -> {basename}", level="info")
+
+        # Use for immediate row update (for UI) without requiring full state refetch
+        self._emit(
+            {
+                "type": "file_progress",
+                "file": basename,
+                "pct": 0,
+                "page": 0,
+                "total_pages": 0,
+                "status": "processing",
+                "method": "direct",
+            }
+        )
         self._emit({"type": "state_update", **self.get_status()})
 
     def _on_page_done(self, event: dict) -> None:
@@ -269,6 +369,7 @@ class JobManager:
         pid = event.get("pid", "?")
         secs = event.get("seconds", 0)
 
+        running_overall_method = ExtractionMethod.DIRECT.value
         with self._lock:
             entry = self._state.find_by_name(basename)
             if entry and total_pages > 0:
@@ -276,9 +377,27 @@ class JobManager:
                 entry.total_pages = total_pages
                 entry.progress_pct = min(99, int(page / total_pages * 100))
 
+                # Track running count of page extraction methods dynamically
+                if not hasattr(entry, "_ocr_pages_count"):
+                    entry._ocr_pages_count = 0
+                if not hasattr(entry, "_direct_pages_count"):
+                    entry._direct_pages_count = 0
+
+                if method == ExtractionMethod.OCR.value:
+                    entry._ocr_pages_count += 1
+                elif method == ExtractionMethod.DIRECT.value:
+                    entry._direct_pages_count += 1
+
+                if entry._ocr_pages_count > entry._direct_pages_count:
+                    entry.method = ExtractionMethod.OCR
+                else:
+                    entry.method = ExtractionMethod.DIRECT
+                running_overall_method = entry.method.value
+
         tag = "OCR" if method == ExtractionMethod.OCR.value else "DIRECT"
         self._append_log(
-            f"[INFO] W{pid} · {basename}  pg {page}/{total_pages}  {tag}  {secs:.2f}s"
+            f"W{pid} · {basename}  pg {page}/{total_pages}  {tag}  {secs:.2f}s",
+            level="info",
         )
         # Lightweight targeted event to avoid full state_update on every page
         self._emit(
@@ -288,6 +407,7 @@ class JobManager:
                 "pct": min(99, int(page / total_pages * 100)) if total_pages else 0,
                 "page": page,
                 "total_pages": total_pages,
+                "method": running_overall_method,
             }
         )
 
@@ -314,6 +434,7 @@ class JobManager:
 
             self._state.done_count = event.get("done", self._state.done_count)
             self._state.current_file = ""
+            final_status = entry.status.value if entry else FileStatus.COMPLETED.value
 
             if etype in ("file_failed", "file_timeout"):
                 self._state.failed_count += 1
@@ -322,6 +443,17 @@ class JobManager:
             else:
                 self._state.direct_count += 1
 
+        self._emit(
+            {
+                "type": "file_progress",
+                "file": os.path.basename(file_path),
+                "pct": 100,
+                "status": final_status,
+                "method": (
+                    entry.method.value if entry else ExtractionMethod.DIRECT.value
+                ),
+            }
+        )
         self._emit({"type": "state_update", **self.get_status()})
 
     def _on_pipeline_done(self, event: dict) -> None:
@@ -332,16 +464,19 @@ class JobManager:
             self._state.current_file = ""
 
         self._append_log(
-            f"[OK] Pipeline complete - "
-            f"done: {event.get('done', 0)} "
-            f"direct: {event.get('direct', 0)} "
-            f"ocr: {event.get('ocr', 0)} "
-            f"failed: {event.get('failed', 0)}"
+            f"Pipeline complete - "
+            f"Done: {event.get('done', 0)} "
+            f"Direct: {event.get('direct', 0)} "
+            f"OCR: {event.get('ocr', 0)} "
+            f"Failed: {event.get('failed', 0)}",
+            level="success",
         )
         self._emit({"type": "state_update", **self.get_status()})
 
     def _on_ocr_missing(self, _event: dict) -> None:
-        self._append_log("[ERROR] OCR engine/binary not installed - pipeline stopped.")
+        self._append_log(
+            "OCR engine/binary not installed - pipeline stopped.", level="error"
+        )
 
     # ------------------------------------------------------------------
     # Internal helper methods
@@ -352,15 +487,33 @@ class JobManager:
             return 0.0
         if self._state.status == JobStatus.RUNNING:
             return round(time.time() - self._state.start_time, 1)
-        if self._state.end_time:
-            return round(self._state.end_time - self._state.start_time, 1)
-        return 0.0
 
-    def _append_log(self, msg: str) -> None:
+        # Ensure we have a valid end_time otherwise fallback to current time
+        end = self._state.end_time if self._state.end_time is not None else time.time()
+        return round(end - self._state.start_time, 1)
+
+    def _append_log(self, msg: str, level: str = "info") -> None:
         """Append to log buffer then broadcast state mutation and side effect separated"""
         with self._lock:
-            self._state.log.append(msg)
-        self._emit({"type": "log", "message": msg})
+            self._state.log.append(msg, level)
+            run_id = self._state.run_id
+            if run_id:
+                try:
+                    import os as _os
+
+                    from config import LOG_RUNS_DIR
+
+                    _os.makedirs(LOG_RUNS_DIR, exist_ok=True)
+                    log_path = _os.path.join(LOG_RUNS_DIR, f"{run_id}.txt")
+                    with open(log_path, "a", encoding="utf-8") as fh:
+                        fh.write(f"[{level.upper()}] {msg}\n")
+                except Exception as exc:
+                    import logging as _logging
+
+                    _logging.warning(
+                        "Could not append log to file for %s: %s", run_id, exc
+                    )
+        self._emit({"type": "log", "message": msg, "level": level})
 
     def _emit(self, event: dict) -> None:
         """Broadcast an event, swallow exceptions so a stalled client never kills the pipeline"""
@@ -381,6 +534,8 @@ class JobManager:
         ocr_engine,
         db,
         run_id: str = "",
+        timeout_seconds: int = 0,
+        settings: Optional[dict] = None,
     ) -> None:
         """Execute ``run_pipeline`` in a background daemon thread"""
         import logging as _logging
@@ -397,14 +552,53 @@ class JobManager:
                 ocr_engine=ocr_engine,
                 db=db,
                 run_id=run_id or None,
+                total_timeout_seconds=timeout_seconds,
+                settings=settings,
             )
         except Exception as exc:
             _logging.exception("Pipeline thread crashed: %s", exc)
-            self._append_log(f"[ERROR] Pipeline crashed: {exc}")
+            self._append_log(f"Pipeline crashed: {exc}", level="error")
             with self._lock:
                 self._state.status = JobStatus.DONE
+                self._state.error_message = str(exc)
                 self._state.end_time = time.time()
             self._emit({"type": "state_update", **self.get_status()})
+        finally:
+            # Always persist the in-memory log to disk so it survives server restarts
+            self._flush_run_log(run_id=run_id, db=db)
+
+    def _flush_run_log(self, run_id: str, db) -> None:
+        """Write all buffered log lines to logs/runs/<run_id>.txt and save path in DB."""
+        if not run_id:
+            return
+        try:
+            import os as _os
+
+            from config import LOG_RUNS_DIR
+
+            _os.makedirs(LOG_RUNS_DIR, exist_ok=True)
+            log_path = _os.path.join(LOG_RUNS_DIR, f"{run_id}.txt")
+
+            # Write buffer only if the file does not already exist
+            # to prevent truncating/overwriting logs written dynamically.
+            if not _os.path.exists(log_path):
+                with self._lock:
+                    lines = self._state.log.snapshot()
+
+                with open(log_path, "w", encoding="utf-8") as fh:
+                    fh.write(
+                        "\n".join(
+                            f"[{line['level'].upper()}] {line['message']}"
+                            for line in lines
+                        )
+                    )
+
+            if db is not None and hasattr(db, "save_run_log_path"):
+                db.save_run_log_path(run_id, log_path)
+        except Exception as exc:
+            import logging as _logging
+
+            _logging.warning("Could not flush run log for %s: %s", run_id, exc)
 
 
 # Module-level singleton (used by server.py lifespan and deps.py)

@@ -113,10 +113,10 @@ def run_pipeline(
     log_dir = log_dir or LOG_DIR
     _configure_logging(log_dir)
 
-    def _log(msg: str):
+    def _log(msg: str, level: str = "info"):
         logger.info(msg)
         if progress_callback:
-            progress_callback({"type": "log", "message": f"[INFO] {msg}"})
+            progress_callback({"type": "log", "message": msg, "level": level})
 
     _log(f"Pipeline started: input={input_dir!r} output={output_dir!r} force={force}")
     print(f"--------- Starting PDF Extraction Pipeline ---------")
@@ -230,7 +230,8 @@ def run_pipeline(
                 # worker process -> main process consumer thread -> threading.Event (the full cross-process signal chain)
                 if ocr_engine_missing_flag.is_set():
                     _log(
-                        "OCR engine or library is missing. Terminating pipeline as requested."
+                        "OCR engine or library is missing. Terminating pipeline as requested.",
+                        level="error",
                     )
                     pool.terminate()
                     break
@@ -256,10 +257,10 @@ def run_pipeline(
                     else:
                         ocr_success += 1
                     log_msg = (
-                        f"[ OK ] {basename} | {method.upper()} | "
+                        f"{basename} | {method.upper()} | "
                         f"{elapsed:.1f}s | {char_count:,} chars"
                     )
-                    _log(log_msg)
+                    _log(log_msg, level="success")
                     print(
                         f"  [{done_count}/{total}] OK    {basename}  ({elapsed:.1f}s)"
                     )
@@ -275,7 +276,7 @@ def run_pipeline(
                     event_status = "timeout" if "TIMEOUT" in status else "failed"
                     if "TIMEOUT" in status:
                         timeouts += 1
-                    _log(f"[FAIL] {basename} -> {message}")
+                    _log(f"{basename} -> {message}", level="error")
                     print(f"  [{done_count}/{total}] ERROR {basename} -> {message}")
 
                 per_file_rows.append(
@@ -317,7 +318,10 @@ def run_pipeline(
     if ocr_engine_missing_flag.is_set():
         print("\n[CRITICAL ERROR] OCR Library or Engine (Tesseract) is not installed.")
         print("                 OCR-only tasks failed. Pipeline stopped early.")
-        _log("CRITICAL: OCR Library or Engine missing. Pipeline stopped early.")
+        _log(
+            "CRITICAL: OCR Library or Engine missing. Pipeline stopped early.",
+            level="error",
+        )
 
     _log(
         f"Pipeline finished. Direct: {direct_success}, OCR: {ocr_success}, "
@@ -335,8 +339,11 @@ def run_pipeline(
     )
 
     # Persist per-run summary
-    summary_dir = "benchmark_output"
+    from config import BENCHMARK_DIR
+
+    summary_dir = BENCHMARK_DIR
     os.makedirs(summary_dir, exist_ok=True)
+
     try:
         with open(
             os.path.join(summary_dir, "pipeline_summary.csv"),

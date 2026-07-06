@@ -71,7 +71,7 @@ def _configure_logging(log_dir: str) -> None:
     logging.basicConfig(
         filename=log_path,
         level=logging.INFO,
-        format="%(asctime)s %(levelname)s %(name)s — %(message)s",
+        format="%(asctime)s %(levelname)s %(name)s - %(message)s",
         force=True,
     )
 
@@ -135,6 +135,8 @@ def run_pipeline(
     ocr_engine: Optional[OCREngine] = None,
     db: Optional[DatabaseRepository] = None,
     run_id: Optional[str] = None,
+    total_timeout_seconds: int = 0,
+    settings: Optional[dict] = None,
 ) -> None:
     """Run the PDF extraction pipeline.
 
@@ -167,9 +169,9 @@ def run_pipeline(
     if not run_id:
         run_id = _uuid.uuid4().hex
 
-    def _log(msg: str) -> None:
+    def _log(msg: str, level: str = "info") -> None:
         logger.info(msg)
-        _emit(progress_callback, LogEvent(message=f"[INFO] {msg}"))
+        _emit(progress_callback, LogEvent(message=msg, level=level))
 
     _log(f"Pipeline started - input={input_dir!r} output={output_dir!r} force={force}")
     logger.info("Workers=%d timeout=%ds", WORKERS, JOB_TIMEOUT_SECONDS)
@@ -216,7 +218,7 @@ def run_pipeline(
         files_to_process.append(fp)
 
     _log(
-        f"Total:{len(all_files)} ToProcess:{len(files_to_process)} Skipped:{skipped_count}"
+        f"Total: {len(all_files)} ToProcess: {len(files_to_process)} Skipped: {skipped_count}"
     )
 
     if not files_to_process:
@@ -228,12 +230,26 @@ def run_pipeline(
     files_to_process.sort(key=lambda p: os.path.getsize(p))
 
     # Create run record before work begins
+    # Scope all extracted files for this run to their own sub-directory
+    # so that extracted_files/run#_run_id/ocr/... and .../direct/... are isolated
+    run_number = db.get_next_run_number()
+    run_dir_name = f"run{run_number}_{run_id}"
+    run_output_dir = os.path.join(output_dir, run_dir_name)
+    os.makedirs(run_output_dir, exist_ok=True)
 
     db.create_run(
         run_id=run_id,
         total_files=len(files_to_process),
         input_dir=input_dir,
+        run_number=run_number,
+        output_dir=run_output_dir,
     )
+
+    if db is not None and hasattr(db, "save_run_log_path"):
+        from config import LOG_RUNS_DIR
+
+        log_path = os.path.join(LOG_RUNS_DIR, f"{run_id}.txt")
+        db.save_run_log_path(run_id, log_path)
 
     # Pre mark all files as started in one transaction
     db.mark_started_batch(files_to_process)
@@ -247,6 +263,7 @@ def run_pipeline(
     event_q = manager.Queue()
     stop_consumer = threading.Event()
     ocr_missing_flag = threading.Event()
+    start_time = datetime.now()
 
     def _consume() -> None:
         while not (stop_consumer.is_set() and event_q.empty()):
@@ -261,7 +278,9 @@ def run_pipeline(
     consumer = threading.Thread(target=_consume, daemon=True)
     consumer.start()
 
-    task_fn = make_task_fn(input_dir=input_dir, output_dir=output_dir)
+    task_fn = make_task_fn(
+        input_dir=input_dir, output_dir=run_output_dir, settings=settings
+    )
 
     effective_workers = safe_worker_count(WORKERS, RAM_PER_WORKER_MB)
     _log(
@@ -279,7 +298,7 @@ def run_pipeline(
                 result: FileResult
 
                 if ocr_missing_flag.is_set():
-                    _log("OCR engine missing - stopping pipeline.")
+                    _log("OCR engine missing - stopping pipeline.", level="error")
                     pool.terminate()
                     break
 
@@ -287,6 +306,15 @@ def run_pipeline(
                     _log("Pipeline cancelled by user.")
                     pool.terminate()
                     break
+
+                if total_timeout_seconds > 0:
+                    elapsed = (datetime.now() - start_time).total_seconds()
+                    if elapsed > total_timeout_seconds:
+                        _log(
+                            f"Pipeline timed out after {elapsed:.1f}s (limit: {total_timeout_seconds}s)."
+                        )
+                        pool.terminate()
+                        break
 
                 done_count += 1
                 progress_pct = int(done_count / total * 100)
@@ -344,6 +372,22 @@ def run_pipeline(
                     if result.outcome == PipelineOutcome.TIMEOUT:
                         timeouts += 1
 
+                    db.save_extracted_text(
+                        source_path=result.file_path,
+                        filename=basename,
+                        rel_path=result.rel_path or basename,
+                        txt_path="",
+                        method=result.method.value,
+                        char_count=0,
+                        page_count=0,
+                        content_hash=result.content_hash,
+                        run_id=run_id,
+                        confidence=0.0,
+                        flags=result.flags,
+                        txt_hash="",
+                        error_message=result.message,
+                    )
+
                 # Build and emit file completion event
                 event_cls = {
                     "file_done": FileDoneEvent,
@@ -386,27 +430,40 @@ def run_pipeline(
         manager.shutdown()
 
     _log(
-        f"Pipeline finished - Direct:{direct_success} OCR:{ocr_success} "
-        f"Failed:{failures} Timeouts:{timeouts}"
+        f"Pipeline finished - Direct: {direct_success} OCR: {ocr_success} "
+        f"Failed: {failures} Timeouts: {timeouts}"
     )
 
     if ocr_missing_flag.is_set():
-        _log("CRITICAL: OCR engine/binary is not installed. Pipeline stopped early.")
+        _log(
+            "CRITICAL: OCR engine/binary is not installed. Pipeline stopped early.",
+            level="error",
+        )
 
-    # Update the run record with final status
-    final_status = "done"
-    if cancel_event is not None and cancel_event.is_set():
-        final_status = "cancelled"
-    elif ocr_missing_flag.is_set():
-        final_status = "failed"
-    db.update_run(
-        run_id,
-        final_status,
-        done_files=direct_success + ocr_success,
-        failed_files=failures,
-        direct_files=direct_success,
-        ocr_files=ocr_success,
-    )
+    if run_id and db:
+        # Update the run record with final status
+        final_status = "done"
+        is_cancelled = cancel_event is not None and cancel_event.is_set()
+        is_timeout = False
+        if total_timeout_seconds > 0:
+            elapsed = (datetime.now() - start_time).total_seconds()
+            is_timeout = elapsed > total_timeout_seconds
+
+        if is_cancelled:
+            final_status = "cancelled"
+        elif is_timeout:
+            final_status = "timeout"
+        elif ocr_missing_flag.is_set():
+            final_status = "failed"
+
+        db.update_run(
+            run_id,
+            final_status,
+            done_files=direct_success + ocr_success,
+            failed_files=failures,
+            direct_files=direct_success,
+            ocr_files=ocr_success,
+        )
 
     _emit_done(
         progress_callback,
@@ -432,7 +489,9 @@ def _write_summary(rows: list[dict]) -> None:
     Filenames include the run datetime so each run's summary is preserved
     rather than overwritten
     """
-    summary_dir = "benchmark_output"
+    from config import BENCHMARK_DIR
+
+    summary_dir = BENCHMARK_DIR
     os.makedirs(summary_dir, exist_ok=True)
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
 

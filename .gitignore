@@ -218,3 +218,4 @@ script.sh
 *.db-*
 
 .venv/*
+port.json

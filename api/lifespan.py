@@ -31,12 +31,14 @@ async def lifespan(app: FastAPI):
 
         engine = get_ocr_engine()
         print(f"[startup] OCR engine: {engine.name}")
-    except RuntimeError as exc:
+    except Exception as exc:
         print(f"[startup] WARNING: {exc}")
         print("[startup] OCR is disabled - direct extraction only.")
 
-    print("PDF TextExtract server ready -> http://localhost:8080")
-    print("  Docs: http://localhost:8080/docs")
+    from config import SERVER_PORT
+
+    print(f"PDF TextExtract server ready -> http://localhost:{SERVER_PORT}")
+    print(f"  Docs: http://localhost:{SERVER_PORT}/docs")
 
     yield
 

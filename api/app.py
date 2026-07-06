@@ -17,6 +17,7 @@ from fastapi.staticfiles import StaticFiles
 
 from api.lifespan import lifespan
 from api.v1.router import v1_router
+from config import SERVE_UI
 
 _PKG_DIR = Path(__file__).parent.parent
 _UI_DIR = _PKG_DIR / "ui"
@@ -56,18 +57,21 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
 
-    # Static UI assets
-    app.mount("/ui", StaticFiles(directory=str(_UI_DIR)), name="ui")
-
     # Versioned REST routes
     app.include_router(v1_router, prefix="/api")
 
-    # SSE stream
+    # SSE streams
     app.add_api_route("/api/events", _sse_endpoint, tags=["Events"])
+    app.add_api_route("/api/events/batch", _batch_sse_endpoint, tags=["Events"])
 
-    @app.get("/")
-    async def index():
-        return FileResponse(str(_UI_DIR / "index.html"))
+    # Static UI only mounted when SERVE_UI is True (default)
+    # Pass --no-ui or set SERVE_UI=false to run in headless / API-only mode
+    if SERVE_UI and _UI_DIR.is_dir():
+        app.mount("/ui", StaticFiles(directory=str(_UI_DIR)), name="ui")
+
+        @app.get("/")
+        async def index():
+            return FileResponse(str(_UI_DIR / "index.html"))
 
     return app
 
@@ -88,7 +92,20 @@ async def _sse_endpoint(request: Request):
 
     async def generate():
         # Push current state immediately so the UI syncs on connect
-        initial = json.dumps({"type": "state_update", **_jm.get_manager().get_status()})
+        st = _jm.get_manager().get_status()
+        if st.get("status") != "running":
+            st = {
+                "status": "idle",
+                "done": 0,
+                "total": 0,
+                "failed": 0,
+                "progress_pct": 0,
+                "log": [],
+                "current_file": "",
+                "error_message": None,
+                "batch_ids": [],
+            }
+        initial = json.dumps({"type": "state_update", **st})
         yield f"data: {initial}\n\n"
 
         try:
@@ -102,6 +119,64 @@ async def _sse_endpoint(request: Request):
                     yield ": keepalive\n\n"
         finally:
             sse.unsubscribe(q)
+
+    return StreamingResponse(
+        generate(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+            "Connection": "keep-alive",
+        },
+    )
+
+
+async def _batch_sse_endpoint(request: Request):
+    """SSE stream for batch scan progress only.
+
+    Opens when a folder/file path is registered and closes when all batches
+    reach scan_status='done'. Job execution events go to GET /api/events.
+    """
+    import asyncio
+
+    from api import sse
+
+    q = await sse.batch_subscribe()
+
+    from config import DB_PATH
+    from db.repository import DatabaseRepository
+
+    db = DatabaseRepository(DB_PATH)
+
+    async def generate():
+        # Deliver initial state immediately
+        try:
+            recent = db.get_recent_batches(limit=1)
+            for b in recent:
+                init_ev = {
+                    "type": "batch_scan_update",
+                    "batch_id": b["batch_id"],
+                    "scan_status": b["scan_status"],
+                    "pdf_count": b["pdf_count"] or 0,
+                    "files_scanned": b["pdf_count"] or 0,
+                    "already_processed_count": b.get("already_processed_count"),
+                    "error_message": b.get("error_message"),
+                }
+                yield f"data: {json.dumps(init_ev)}\n\n"
+        except Exception:
+            pass  # survive DB failure to stream live events anyway
+
+        try:
+            while True:
+                if await request.is_disconnected():
+                    break
+                try:
+                    event = await asyncio.wait_for(q.get(), timeout=25)
+                    yield f"data: {json.dumps(event)}\n\n"
+                except asyncio.TimeoutError:
+                    yield ": keepalive\n\n"
+        finally:
+            sse.batch_unsubscribe(q)
 
     return StreamingResponse(
         generate(),

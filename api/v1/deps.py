@@ -34,14 +34,20 @@ def get_db() -> DatabaseRepository:
 def get_ocr_engine() -> OCREngine:
     """Return the first available registered OCR engine.
 
-    Raises 'RuntimeError' if no engine is available (caught by the startup
-    lifespan and logged as a warning - OCR-free operation is still possible)
+    Raises 'HTTPException' if no engine is available.
     """
+    from fastapi import HTTPException
+
     # Imported here to trigger services/__init__.py registration on first call
     import services  # noqa: F401
     from services.ocr.registry import get_default_engine
 
-    return get_default_engine()
+    try:
+        return get_default_engine()
+    except RuntimeError as exc:
+        raise HTTPException(
+            status_code=400, detail=f"OCR engine is not available: {str(exc)}"
+        )
 
 
 def get_job_manager():
