@@ -20,6 +20,7 @@ from pathlib import Path
 
 from api import sse as _sse
 from api.v1.enums import ScanStatus
+from common.fs.paths import to_posix_path
 from db.repository import DatabaseRepository
 from services.hasher import compute_file_hash
 
@@ -54,7 +55,7 @@ def _do_scan(
                 {
                     "name": pdf.name,
                     "rel_path": (
-                        pdf.relative_to(root).as_posix() if is_folder else pdf.name
+                        to_posix_path(pdf.relative_to(root)) if is_folder else pdf.name
                     ),
                     "size_bytes": pdf.stat().st_size if pdf.exists() else 0,
                     "content_hash": h or None,

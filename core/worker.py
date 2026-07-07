@@ -311,9 +311,9 @@ def process_file(
     start = time.time()
     rel_path = ""
     try:
-        from pathlib import Path
+        from common.fs.paths import to_posix_path
 
-        rel_path = Path(os.path.relpath(file_path, input_dir_root)).as_posix()
+        rel_path = to_posix_path(os.path.relpath(file_path, input_dir_root))
         base_name_no_ext = os.path.splitext(rel_path)[0]
 
         # Pre-validation checks
