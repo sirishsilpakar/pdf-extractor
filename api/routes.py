@@ -14,6 +14,7 @@ from pydantic import BaseModel, field_validator
 
 import database
 from api import job_manager, sse
+from common.fs.paths import to_posix_path
 
 _PKG_DIR = Path(__file__).parent.parent
 UPLOAD_DIR = _PKG_DIR / "uploads"
@@ -266,7 +267,7 @@ async def list_files():
             if fname.endswith(".txt"):
                 full = os.path.join(root, fname)
                 stat = os.stat(full)
-                rel = os.path.relpath(full, OUTPUT_DIR)
+                rel = to_posix_path(os.path.relpath(full, OUTPUT_DIR))
                 results.append(
                     {
                         "name": fname,
@@ -302,7 +303,9 @@ async def search(q: str = Query(..., min_length=1)):
                     matches.append(
                         {
                             "file": fname,
-                            "rel_path": os.path.relpath(full, OUTPUT_DIR),
+                            "rel_path": to_posix_path(
+                                os.path.relpath(full, OUTPUT_DIR)
+                            ),
                             "snippet": snippet,
                         }
                     )

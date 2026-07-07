@@ -614,3 +614,33 @@ def test_get_batch_files_sorting(tmp_db):
         "b_file.pdf",
         "a_file.pdf",
     ]
+
+
+def test_windows_path_normalization(tmp_db):
+    import sys
+
+    # Save a file with a backslash relative path
+    tmp_db.save_extracted_text(
+        source_path="/dummy/2579/abc.pdf",
+        filename="abc.pdf",
+        rel_path="2579\\abc.pdf",
+        txt_path="/dummy/2579/abc.txt",
+        method="direct",
+        char_count=100,
+        page_count=1,
+        content_hash="h-win",
+        run_id="run-win",
+    )
+
+    tree = tmp_db.get_result_tree(size=10)
+
+    if sys.platform == "win32":
+        # On Windows, backslash is normalized to forward slash, so it's a directory
+        dir_paths = [d["path"] for d in tree["directories"]]
+        assert "2579" in dir_paths
+        assert len(tree["top_level_files"]) == 0
+    else:
+        # On macOS/Linux, backslash is a literal character, so it is a top-level file
+        assert len(tree["directories"]) == 0
+        top_files = [f["rel_path"] for f in tree["top_level_files"]]
+        assert "2579\\abc.pdf" in top_files

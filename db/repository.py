@@ -846,6 +846,9 @@ class DatabaseRepository:
         error_message: str | None = None,
     ) -> int:
         """Upsert an extraction record. Returns the record ID (new or existing)"""
+        from common.fs.paths import to_posix_path
+
+        rel_path = to_posix_path(rel_path)
         now = self._now()
         with self._lock:
             conn = self._connect()
@@ -1046,6 +1049,9 @@ class DatabaseRepository:
         """
         if not page_texts:
             return
+        from common.fs.paths import to_posix_path
+
+        rel_path = to_posix_path(rel_path)
         # Remove any existing pages for this doc (re-extraction / force mode)
         with self._lock:
             conn = self._connect()
@@ -1262,6 +1268,10 @@ class DatabaseRepository:
 
         Each dict must have keys: name, rel_path, size_bytes, content_hash, is_processed.
         """
+        from common.fs.paths import to_posix_path
+
+        for f in files:
+            f["rel_path"] = to_posix_path(f["rel_path"])
         with self._lock:
             conn = self._connect()
             try:
