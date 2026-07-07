@@ -53,7 +53,9 @@ def _do_scan(
             pending_batch.append(
                 {
                     "name": pdf.name,
-                    "rel_path": (str(pdf.relative_to(root)) if is_folder else pdf.name),
+                    "rel_path": (
+                        pdf.relative_to(root).as_posix() if is_folder else pdf.name
+                    ),
                     "size_bytes": pdf.stat().st_size if pdf.exists() else 0,
                     "content_hash": h or None,
                     "is_processed": 0,

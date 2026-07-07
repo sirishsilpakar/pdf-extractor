@@ -48,7 +48,7 @@ def _collect_files(output_dir: Path, db: "DatabaseRepository") -> list[dict]:
                 conf = None
                 flags_str = None
 
-                rel_path = str(full.relative_to(output_dir))
+                rel_path = full.relative_to(output_dir).as_posix()
 
                 from services.hasher import compute_file_hash
 

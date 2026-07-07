@@ -204,7 +204,9 @@ async def register_file_reference(
                 size_bytes=pdf_path.stat().st_size if pdf_path.exists() else 0,
                 content_hash=h,
                 rel_path=(
-                    str(pdf_path.relative_to(resolved)) if is_folder else pdf_path.name
+                    pdf_path.relative_to(resolved).as_posix()
+                    if is_folder
+                    else pdf_path.name
                 ),
             )
         )

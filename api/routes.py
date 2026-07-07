@@ -266,7 +266,9 @@ async def list_files():
             if fname.endswith(".txt"):
                 full = os.path.join(root, fname)
                 stat = os.stat(full)
-                rel = os.path.relpath(full, OUTPUT_DIR)
+                from pathlib import Path
+
+                rel = Path(os.path.relpath(full, OUTPUT_DIR)).as_posix()
                 results.append(
                     {
                         "name": fname,
@@ -302,7 +304,9 @@ async def search(q: str = Query(..., min_length=1)):
                     matches.append(
                         {
                             "file": fname,
-                            "rel_path": os.path.relpath(full, OUTPUT_DIR),
+                            "rel_path": Path(
+                                os.path.relpath(full, OUTPUT_DIR)
+                            ).as_posix(),
                             "snippet": snippet,
                         }
                     )
