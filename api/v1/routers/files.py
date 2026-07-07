@@ -13,6 +13,7 @@ from fastapi import APIRouter, HTTPException, Query
 
 from api.v1.deps import DBDep
 from api.v1.schemas import ExtractedFileRecord, PagedResponse
+from common.fs.paths import to_posix_path
 from config import OUTPUT_DIR
 
 if TYPE_CHECKING:
@@ -48,7 +49,7 @@ def _collect_files(output_dir: Path, db: "DatabaseRepository") -> list[dict]:
                 conf = None
                 flags_str = None
 
-                rel_path = str(full.relative_to(output_dir))
+                rel_path = to_posix_path(full.relative_to(output_dir))
 
                 from services.hasher import compute_file_hash
 

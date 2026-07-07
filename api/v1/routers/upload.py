@@ -26,6 +26,7 @@ from api.v1.schemas import (
     FileReferenceSchema,
     UploadedFileSchema,
 )
+from common.fs.paths import to_posix_path
 from config import UPLOAD_CHUNK_SIZE, UPLOAD_DIR
 from services.hasher import compute_file_hash
 
@@ -204,7 +205,9 @@ async def register_file_reference(
                 size_bytes=pdf_path.stat().st_size if pdf_path.exists() else 0,
                 content_hash=h,
                 rel_path=(
-                    str(pdf_path.relative_to(resolved)) if is_folder else pdf_path.name
+                    to_posix_path(pdf_path.relative_to(resolved))
+                    if is_folder
+                    else pdf_path.name
                 ),
             )
         )
